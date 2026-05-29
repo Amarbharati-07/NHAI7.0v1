@@ -47,6 +47,12 @@
       "expo-sqlite",
       "expo-file-system",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "SpectraID needs camera access to perform liveness detection during attendance verification."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "SpectraID needs access to save captured face images.",
