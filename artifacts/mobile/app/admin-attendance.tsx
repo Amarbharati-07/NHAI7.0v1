@@ -19,6 +19,7 @@ import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAdminData } from "@/contexts/AdminDataContext";
 import { getWeeklyAttendance } from "@/services/database";
 import { syncService } from "@/services/SyncService";
+import { exportAttendanceCSV, exportWeeklyCSV, exportWorkersCSV } from "@/services/reportService";
 import { useColors } from "@/hooks/useColors";
 
 type ViewTab = "live" | "trends" | "records" | "alerts" | "reports";
@@ -453,36 +454,60 @@ export default function AdminAttendanceScreen() {
           {/* ── REPORTS TAB ── */}
           {tab === "reports" && (
             <>
+              <View style={[styles.exportInfoBanner, { backgroundColor: colors.primary + "11", borderRadius: colors.radius }]}>
+                <Ionicons name="information-circle-outline" size={16} color={colors.accent} />
+                <Text style={[styles.exportInfoText, { color: colors.textSecondary }]}>
+                  Reports export as CSV files with GPS coordinates, plaza, operator, and timestamp data.
+                </Text>
+              </View>
               <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>SELECT REPORT TYPE</Text>
               <View style={styles.reportsGrid}>
-                {REPORT_TYPES.map((rt) => (
-                  <TouchableOpacity
-                    key={rt.label}
-                    style={[styles.reportCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      Alert.alert("Generate Report", `Generating "${rt.label}"...\n\nExport options: PDF, Excel, CSV`, [
-                        { text: "Cancel" },
-                        { text: "Export PDF" },
-                        { text: "Export Excel" },
-                      ]);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <View style={[styles.reportIcon, { backgroundColor: rt.color + "22" }]}>
-                      <Ionicons name={rt.icon} size={24} color={rt.color} />
-                    </View>
-                    <Text style={[styles.reportLabel, { color: colors.foreground }]}>{rt.label}</Text>
-                    <Text style={[styles.reportDesc, { color: colors.textMuted }]}>{rt.desc}</Text>
-                    <View style={styles.exportRow}>
-                      {["PDF", "XLS", "CSV"].map((fmt) => (
-                        <View key={fmt} style={[styles.fmtBadge, { backgroundColor: rt.color + "22" }]}>
-                          <Text style={[styles.fmtText, { color: rt.color }]}>{fmt}</Text>
+                {REPORT_TYPES.map((rt) => {
+                  const handleExport = async () => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const today = new Date().toISOString().split("T")[0];
+                    let result: { success: boolean; error?: string };
+
+                    try {
+                      if (rt.label === "Daily Report") {
+                        result = await exportAttendanceCSV({ dateFilter: today, label: "daily_attendance" });
+                      } else if (rt.label === "Weekly Report") {
+                        result = await exportWeeklyCSV();
+                      } else if (rt.label === "Worker Report") {
+                        result = await exportWorkersCSV();
+                      } else {
+                        result = await exportAttendanceCSV({ label: rt.label.toLowerCase().replace(/\s+/g, "_") });
+                      }
+
+                      if (!result.success) {
+                        Alert.alert("Export Failed", result.error ?? "Could not generate report.");
+                      }
+                    } catch (e) {
+                      Alert.alert("Export Failed", (e as Error).message);
+                    }
+                  };
+
+                  return (
+                    <TouchableOpacity
+                      key={rt.label}
+                      style={[styles.reportCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}
+                      onPress={handleExport}
+                      activeOpacity={0.8}
+                    >
+                      <View style={[styles.reportIcon, { backgroundColor: rt.color + "22" }]}>
+                        <Ionicons name={rt.icon} size={24} color={rt.color} />
+                      </View>
+                      <Text style={[styles.reportLabel, { color: colors.foreground }]}>{rt.label}</Text>
+                      <Text style={[styles.reportDesc, { color: colors.textMuted }]}>{rt.desc}</Text>
+                      <View style={styles.exportRow}>
+                        <View style={[styles.fmtBadge, { backgroundColor: rt.color + "22" }]}>
+                          <Ionicons name="download-outline" size={10} color={rt.color} />
+                          <Text style={[styles.fmtText, { color: rt.color }]}>CSV</Text>
                         </View>
-                      ))}
-                    </View>
-                  </TouchableOpacity>
-                ))}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </>
           )}
@@ -581,6 +606,8 @@ const styles = StyleSheet.create({
   reportLabel: { fontSize: 13, fontWeight: "700" },
   reportDesc: { fontSize: 11, lineHeight: 15 },
   exportRow: { flexDirection: "row", gap: 5, marginTop: 2 },
-  fmtBadge: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 },
+  fmtBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 },
   fmtText: { fontSize: 10, fontWeight: "700" },
+  exportInfoBanner: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, marginBottom: 4 },
+  exportInfoText: { flex: 1, fontSize: 12, lineHeight: 17 },
 });

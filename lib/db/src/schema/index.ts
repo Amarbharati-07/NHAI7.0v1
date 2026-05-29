@@ -28,6 +28,8 @@ export const attendanceTable = pgTable("attendance", {
   plazaId: text("plaza_id").default(""),
   operatorId: text("operator_id").default(""),
   deviceToken: text("device_token").default(""),
+  latitude: text("latitude").default(""),
+  longitude: text("longitude").default(""),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

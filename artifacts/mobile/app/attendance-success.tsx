@@ -16,6 +16,7 @@ import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAuth } from "@/contexts/AuthContext";
 import { insertAttendance, getWorkerByWorkerId } from "@/services/database";
 import { syncService } from "@/services/SyncService";
+import { requestLocationPermission, getCurrentLocation, checkGeofence, GpsLocation } from "@/services/locationService";
 import { useColors } from "@/hooks/useColors";
 
 export default function AttendanceSuccessScreen() {
@@ -37,6 +38,7 @@ export default function AttendanceSuccessScreen() {
   const displayConf = confidence ? `${confidence}%` : "—";
 
   const [savedStatus, setSavedStatus] = useState<"saving" | "saved_offline" | "saved_synced" | "error">("saving");
+  const [gpsLocation, setGpsLocation] = useState<GpsLocation | null>(null);
   const savedRef = useRef(false);
 
   const now     = new Date();
@@ -64,6 +66,14 @@ export default function AttendanceSuccessScreen() {
           return;
         }
 
+        // Capture GPS location
+        let loc: GpsLocation | null = null;
+        if (Platform.OS !== "web") {
+          await requestLocationPermission();
+          loc = await getCurrentLocation();
+          if (loc) setGpsLocation(loc);
+        }
+
         await insertAttendance({
           workerId: dbWorkerId,
           date: dateStr,
@@ -73,6 +83,8 @@ export default function AttendanceSuccessScreen() {
           plazaId: user?.plazaId ?? "",
           operatorId: user?.userId ?? "",
           deviceToken: user?.deviceToken ?? "",
+          latitude: loc?.latitude ?? null,
+          longitude: loc?.longitude ?? null,
         });
 
         const netState = syncService.getState();
@@ -159,6 +171,14 @@ export default function AttendanceSuccessScreen() {
                 { icon: "time-outline"      as const, label: "Time",     value: displayTime,        color: colors.accent  },
                 { icon: "location-outline"  as const, label: "Plaza",    value: user?.plazaName ?? "—", color: colors.warning },
                 { icon: "person-outline"    as const, label: "Operator", value: user?.userId ?? "—",    color: colors.warning },
+                {
+                  icon: "navigate-outline" as const,
+                  label: "GPS",
+                  value: gpsLocation
+                    ? `${gpsLocation.latitude.toFixed(5)}, ${gpsLocation.longitude.toFixed(5)}`
+                    : Platform.OS === "web" ? "Not available on web" : "Acquiring...",
+                  color: gpsLocation ? colors.success : colors.textMuted,
+                },
               ].map((row, i, arr) => (
                 <View
                   key={i}

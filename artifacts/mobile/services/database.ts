@@ -41,6 +41,8 @@ export interface AttendanceRecord {
   plazaId?: string;
   operatorId?: string;
   deviceToken?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   createdAt?: string;
 }
 
@@ -389,6 +391,8 @@ async function initDb(db: import("expo-sqlite").SQLiteDatabase) {
     "ALTER TABLE attendance ADD COLUMN operatorId TEXT DEFAULT ''",
     "ALTER TABLE attendance ADD COLUMN deviceToken TEXT DEFAULT ''",
     "ALTER TABLE workers ADD COLUMN status TEXT DEFAULT 'active'",
+    "ALTER TABLE attendance ADD COLUMN latitude REAL",
+    "ALTER TABLE attendance ADD COLUMN longitude REAL",
     `CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       workerId INTEGER NOT NULL,
@@ -481,6 +485,7 @@ export async function insertAttendance(
   record: {
     workerId: number; date: string; time: string; status?: string; syncStatus?: string;
     plazaId?: string; operatorId?: string; deviceToken?: string;
+    latitude?: number | null; longitude?: number | null;
   }
 ): Promise<number> {
   if (IS_WEB) {
@@ -496,8 +501,13 @@ export async function insertAttendance(
   }
   const db = await getDb();
   const result = await db.runAsync(
-    "INSERT INTO attendance (workerId, date, time, status, syncStatus, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?)",
-    [record.workerId, record.date, record.time, record.status ?? "present", record.syncStatus ?? "pending", record.plazaId ?? "", record.operatorId ?? "", record.deviceToken ?? ""]
+    "INSERT INTO attendance (workerId, date, time, status, syncStatus, plazaId, operatorId, deviceToken, latitude, longitude) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    [
+      record.workerId, record.date, record.time,
+      record.status ?? "present", record.syncStatus ?? "pending",
+      record.plazaId ?? "", record.operatorId ?? "", record.deviceToken ?? "",
+      record.latitude ?? null, record.longitude ?? null,
+    ]
   );
   await db.runAsync(
     "INSERT INTO sync_queue (recordType, recordId, status) VALUES (?, ?, ?)",

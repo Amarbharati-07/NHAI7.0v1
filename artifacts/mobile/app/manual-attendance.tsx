@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,6 +17,13 @@ import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAuth } from "@/contexts/AuthContext";
 import { Worker, getWorkers, getWorkersByPlaza, insertAttendance, getAttendanceRecords } from "@/services/database";
+import {
+  requestLocationPermission,
+  getCurrentLocation,
+  checkGeofence,
+  formatDistance,
+  GpsLocation,
+} from "@/services/locationService";
 import { syncService } from "@/services/SyncService";
 import { useColors } from "@/hooks/useColors";
 
@@ -32,12 +39,36 @@ export default function ManualAttendanceScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
-  const [workers, setWorkers] = useState<WorkerWithMark[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isOnline, setIsOnline] = useState(syncService.getState().isOnline);
+  const [workers, setWorkers]         = useState<WorkerWithMark[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [isOnline, setIsOnline]       = useState(syncService.getState().isOnline);
+  const [location, setLocation]       = useState<GpsLocation | null>(null);
+  const [locLoading, setLocLoading]   = useState(false);
+  const [locPermission, setLocPermission] = useState<"granted" | "denied" | "pending">("pending");
+  const [geofenceOk, setGeofenceOk]   = useState<boolean | null>(null);
+  const [geofenceDist, setGeofenceDist] = useState<number>(0);
+  const locRef = useRef<GpsLocation | null>(null);
 
   const today = new Date().toISOString().split("T")[0];
-  const now   = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const nowTime = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+  const initLocation = useCallback(async () => {
+    if (Platform.OS === "web") { setLocPermission("denied"); return; }
+    setLocLoading(true);
+    const granted = await requestLocationPermission();
+    setLocPermission(granted ? "granted" : "denied");
+    if (granted) {
+      const loc = await getCurrentLocation();
+      locRef.current = loc;
+      setLocation(loc);
+      if (loc && user?.plazaId) {
+        const geo = checkGeofence(user.plazaId, loc.latitude, loc.longitude);
+        setGeofenceOk(geo.inBounds);
+        setGeofenceDist(geo.distance);
+      }
+    }
+    setLocLoading(false);
+  }, [user?.plazaId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,74 +80,74 @@ export default function ManualAttendanceScreen() {
       const todayRecords = await getAttendanceRecords();
       const todayMap = new Map<number, "present" | "absent">();
       for (const r of todayRecords) {
-        if (r.date === today) {
-          todayMap.set(r.workerId, r.status as "present" | "absent");
-        }
+        if (r.date === today) todayMap.set(r.workerId, r.status as "present" | "absent");
       }
 
-      setWorkers(
-        allWorkers.map((w) => ({
-          ...w,
-          markedToday: todayMap.get(w.id!) ?? null,
-          markStatus: "idle",
-        }))
-      );
+      setWorkers(allWorkers.map((w) => ({
+        ...w,
+        markedToday: todayMap.get(w.id!) ?? null,
+        markStatus: "idle" as MarkStatus,
+      })));
     } catch {}
     setLoading(false);
   }, [user?.plazaId, today]);
 
   useEffect(() => {
     load();
+    initLocation();
     const unsub = syncService.subscribe((s) => setIsOnline(s.isOnline));
     return () => unsub();
-  }, [load]);
+  }, [load, initLocation]);
 
   const markAttendance = async (worker: WorkerWithMark, status: "present" | "absent") => {
     if (worker.markedToday) {
+      Alert.alert("Already Marked", `${worker.fullName} is already marked as ${worker.markedToday} today.`);
+      return;
+    }
+
+    if (geofenceOk === false && user?.plazaId) {
       Alert.alert(
-        "Already Marked",
-        `${worker.fullName} is already marked as ${worker.markedToday} today.`
+        "Outside Plaza Boundary",
+        `You are ${formatDistance(geofenceDist)} away from ${user.plazaName ?? "the plaza"}. Do you still want to mark attendance?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Mark Anyway", onPress: () => doMark(worker, status) },
+        ]
       );
       return;
     }
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await doMark(worker, status);
+  };
 
-    setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === worker.id ? { ...w, markStatus: "marking" } : w
-      )
-    );
+  const doMark = async (worker: WorkerWithMark, status: "present" | "absent") => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setWorkers((prev) => prev.map((w) => w.id === worker.id ? { ...w, markStatus: "marking" } : w));
+
+    const currentTime = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    const loc = locRef.current;
 
     try {
       await insertAttendance({
         workerId: worker.id!,
         date: today,
-        time: now,
+        time: currentTime,
         status,
         syncStatus: "pending",
         plazaId: user?.plazaId ?? worker.plazaId ?? "",
         operatorId: user?.userId ?? "",
         deviceToken: user?.deviceToken ?? "",
+        latitude: loc?.latitude ?? null,
+        longitude: loc?.longitude ?? null,
       });
 
       setWorkers((prev) =>
-        prev.map((w) =>
-          w.id === worker.id
-            ? { ...w, markedToday: status, markStatus: "done" }
-            : w
-        )
+        prev.map((w) => w.id === worker.id ? { ...w, markedToday: status, markStatus: "done" } : w)
       );
-
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
       if (isOnline) syncService.sync();
     } catch {
-      setWorkers((prev) =>
-        prev.map((w) =>
-          w.id === worker.id ? { ...w, markStatus: "error" } : w
-        )
-      );
+      setWorkers((prev) => prev.map((w) => w.id === worker.id ? { ...w, markStatus: "error" } : w));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
   };
@@ -127,6 +158,10 @@ export default function ManualAttendanceScreen() {
 
   const bottomPad = Platform.OS === "web" ? 24 : insets.bottom + 16;
 
+  const geofenceColor = geofenceOk === true ? colors.success : geofenceOk === false ? colors.destructive : colors.textMuted;
+  const geofenceBg    = geofenceOk === true ? colors.successBg : geofenceOk === false ? (colors.destructive + "22") : colors.surface;
+  const geofenceIcon  = geofenceOk === true ? "checkmark-circle" : geofenceOk === false ? "alert-circle" : "location-outline";
+
   const renderWorker = ({ item }: { item: WorkerWithMark }) => {
     const isMarking = item.markStatus === "marking";
     const isPresent = item.markedToday === "present";
@@ -134,20 +169,11 @@ export default function ManualAttendanceScreen() {
     const isDone    = isPresent || isAbsent;
 
     return (
-      <View
-        style={[
-          styles.workerCard,
-          {
-            backgroundColor: colors.card,
-            borderColor: isPresent
-              ? colors.success + "55"
-              : isAbsent
-              ? colors.destructive + "55"
-              : colors.border,
-            borderRadius: colors.radius,
-          },
-        ]}
-      >
+      <View style={[styles.workerCard, {
+        backgroundColor: colors.card,
+        borderColor: isPresent ? colors.success + "55" : isAbsent ? colors.destructive + "55" : colors.border,
+        borderRadius: colors.radius,
+      }]}>
         <View style={[styles.workerAvatar, {
           backgroundColor: isDone
             ? (isPresent ? colors.successBg : colors.destructive + "22")
@@ -161,9 +187,7 @@ export default function ManualAttendanceScreen() {
         </View>
 
         <View style={styles.workerInfo}>
-          <Text style={[styles.workerName, { color: colors.foreground }]}>
-            {item.fullName}
-          </Text>
+          <Text style={[styles.workerName, { color: colors.foreground }]}>{item.fullName}</Text>
           <Text style={[styles.workerMeta, { color: colors.textMuted }]}>
             {item.workerId} · {item.department}
           </Text>
@@ -171,10 +195,9 @@ export default function ManualAttendanceScreen() {
             <View style={[styles.markedBadge, {
               backgroundColor: isPresent ? colors.successBg : colors.destructive + "22",
             }]}>
-              <Text style={[styles.markedBadgeText, {
-                color: isPresent ? colors.success : colors.destructive,
-              }]}>
-                {isPresent ? "Present" : "Absent"} · {now}
+              <Text style={[styles.markedBadgeText, { color: isPresent ? colors.success : colors.destructive }]}>
+                {isPresent ? "Present" : "Absent"} · {nowTime}
+                {location ? ` · GPS ✓` : ""}
               </Text>
             </View>
           )}
@@ -217,15 +240,14 @@ export default function ManualAttendanceScreen() {
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Mark Attendance" showBack onBack={() => router.back()} />
 
+        {/* Context banner */}
         {user?.plazaName && (
           <View style={[styles.contextBanner, { backgroundColor: colors.primary + "12", borderBottomColor: colors.primary + "22" }]}>
             <Ionicons name="business-outline" size={14} color={colors.primary} />
             <Text style={[styles.contextText, { color: colors.primary }]}>
               {user.plazaName} · {user.userId}
             </Text>
-            <View style={[styles.netBadge, {
-              backgroundColor: isOnline ? colors.successBg : colors.warningBg,
-            }]}>
+            <View style={[styles.netBadge, { backgroundColor: isOnline ? colors.successBg : colors.warningBg }]}>
               <Ionicons name={isOnline ? "wifi" : "wifi-outline"} size={11} color={isOnline ? colors.success : colors.warning} />
               <Text style={[styles.netBadgeText, { color: isOnline ? colors.success : colors.warning }]}>
                 {isOnline ? "Online" : "Offline"}
@@ -242,23 +264,66 @@ export default function ManualAttendanceScreen() {
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
             <>
-              {/* Today's stats */}
+              {/* Stats row */}
               <View style={styles.statsRow}>
                 {[
-                  { label: "Present", count: presentCount, color: colors.success, bg: colors.successBg },
+                  { label: "Present", count: presentCount, color: colors.success,              bg: colors.successBg },
                   { label: "Absent",  count: absentCount,  color: colors.destructive ?? "#ef4444", bg: colors.destructive + "22" },
-                  { label: "Pending", count: pendingCount, color: colors.warning,   bg: colors.warningBg },
+                  { label: "Pending", count: pendingCount, color: colors.warning,              bg: colors.warningBg },
                 ].map((s) => (
-                  <View key={s.label} style={[styles.statCard, {
-                    backgroundColor: s.bg,
-                    borderRadius: colors.radius,
-                  }]}>
+                  <View key={s.label} style={[styles.statCard, { backgroundColor: s.bg, borderRadius: colors.radius }]}>
                     <Text style={[styles.statNum, { color: s.color }]}>{s.count}</Text>
                     <Text style={[styles.statLabel, { color: s.color }]}>{s.label}</Text>
                   </View>
                 ))}
               </View>
 
+              {/* GPS / Geofence status */}
+              <View style={[styles.gpsBanner, {
+                backgroundColor: geofenceBg,
+                borderColor: geofenceColor + "44",
+                borderRadius: colors.radius,
+              }]}>
+                <Ionicons
+                  name={locLoading ? "sync-outline" : geofenceIcon as any}
+                  size={16}
+                  color={locLoading ? colors.textMuted : geofenceColor}
+                />
+                <View style={{ flex: 1 }}>
+                  {locLoading ? (
+                    <Text style={[styles.gpsText, { color: colors.textMuted }]}>Getting your location...</Text>
+                  ) : locPermission === "denied" ? (
+                    <Text style={[styles.gpsText, { color: colors.textMuted }]}>
+                      Location permission denied — GPS not recorded
+                    </Text>
+                  ) : location ? (
+                    <>
+                      <Text style={[styles.gpsText, { color: geofenceColor, fontWeight: "700" }]}>
+                        {geofenceOk === true
+                          ? `Within plaza boundary (${formatDistance(geofenceDist)} from plaza)`
+                          : geofenceOk === false
+                          ? `Outside boundary — ${formatDistance(geofenceDist)} from plaza`
+                          : "Location acquired"}
+                      </Text>
+                      <Text style={[styles.gpsSub, { color: colors.textMuted }]}>
+                        {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+                        {location.accuracy ? ` · ±${Math.round(location.accuracy)}m` : ""}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={[styles.gpsText, { color: colors.textMuted }]}>
+                      Could not get location — tap to retry
+                    </Text>
+                  )}
+                </View>
+                {!locLoading && (
+                  <TouchableOpacity onPress={initLocation} style={styles.gpsRetry}>
+                    <Ionicons name="refresh-outline" size={14} color={colors.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Offline warning */}
               {!isOnline && (
                 <View style={[styles.offlineBanner, {
                   backgroundColor: colors.warningBg,
@@ -267,7 +332,7 @@ export default function ManualAttendanceScreen() {
                 }]}>
                   <Ionicons name="cloud-upload-outline" size={16} color={colors.warning} />
                   <Text style={[styles.offlineText, { color: colors.warning }]}>
-                    Offline mode — records saved locally and will sync automatically when internet returns
+                    Offline — records saved locally, syncs automatically when internet returns
                   </Text>
                 </View>
               )}
@@ -286,7 +351,7 @@ export default function ManualAttendanceScreen() {
             ) : (
               <View style={styles.center}>
                 <Ionicons name="people-outline" size={48} color={colors.textMuted} />
-                <Text style={[styles.emptyText, { color: colors.textMuted }]}>No workers found</Text>
+                <Text style={[styles.emptyText, { color: colors.textMuted }]}>No workers found at this plaza</Text>
               </View>
             )
           }
@@ -304,9 +369,13 @@ const styles = StyleSheet.create({
   netBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
   netBadgeText: { fontSize: 11, fontWeight: "700" },
   statsRow: { flexDirection: "row", gap: 10, marginBottom: 4 },
-  statCard: { flex: 1, alignItems: "center", paddingVertical: 12, gap: 4, borderRadius: 10 },
+  statCard: { flex: 1, alignItems: "center", paddingVertical: 12, gap: 4 },
   statNum: { fontSize: 24, fontWeight: "800" },
   statLabel: { fontSize: 11, fontWeight: "600" },
+  gpsBanner: { flexDirection: "row", alignItems: "flex-start", padding: 12, borderWidth: 1, marginBottom: 4, gap: 10 },
+  gpsText: { fontSize: 12, fontWeight: "500" },
+  gpsSub: { fontSize: 10, marginTop: 2 },
+  gpsRetry: { padding: 4 },
   offlineBanner: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderWidth: 1, marginBottom: 4 },
   offlineText: { flex: 1, fontSize: 12, fontWeight: "500" },
   sectionTitle: { fontSize: 14, fontWeight: "700", marginBottom: 2 },
