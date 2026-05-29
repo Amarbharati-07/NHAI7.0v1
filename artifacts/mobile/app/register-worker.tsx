@@ -19,6 +19,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
+import UnauthorizedDeviceScreen from "@/components/UnauthorizedDeviceScreen";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   type FacePose,
   POSE_CONFIGS,
@@ -131,6 +133,7 @@ interface FormState {
 export default function RegisterWorkerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const sessionId = useRef(`sess_${Date.now()}`).current;
 
   const fullNameRef   = useRef<TextInput>(null);
@@ -138,9 +141,12 @@ export default function RegisterWorkerScreen() {
   const siteRef       = useRef<TextInput>(null);
   const contractorRef = useRef<TextInput>(null);
 
+  /* Auto-inherit plaza name as siteLocation for operators */
+  const inheritedSite = user?.plazaName ?? "";
   const [form, setForm] = useState<FormState>({
     workerId: "", fullName: "", mobile: "",
-    department: "", contractorName: "", employeeType: "", siteLocation: "",
+    department: "", contractorName: "", employeeType: "",
+    siteLocation: inheritedSite,
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
@@ -188,7 +194,12 @@ export default function RegisterWorkerScreen() {
     }
     setLoading(true);
     try {
-      const workerId = await insertWorker(form);
+      const workerId = await insertWorker({
+        ...form,
+        plazaId:     user?.plazaId ?? "",
+        operatorId:  user?.userId  ?? "",
+        deviceToken: user?.deviceToken ?? "",
+      });
       await saveFaceImagesToDb(workerId, sessionId);
       await clearSession(sessionId);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -212,12 +223,19 @@ export default function RegisterWorkerScreen() {
   const onChangeEmpType     = useCallback((v: string) => setField("employeeType", v), [setField]);
 
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom + 20;
+  const isOperator      = user?.role === "operator";
+  const deviceBlocked   = isOperator && !user?.isDeviceAuthorized;
 
   return (
     <DrawerOverlay>
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Register Worker" showBack onBack={() => router.back()} />
-        <ScrollView
+
+        {deviceBlocked && (
+          <UnauthorizedDeviceScreen reason={user?.deviceVerifyReason} />
+        )}
+
+        {!deviceBlocked && <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -236,10 +254,23 @@ export default function RegisterWorkerScreen() {
               onSubmitEditing={() => mobileRef.current?.focus()} />
             <Field label="Mobile Number" placeholder="10-digit mobile number" value={form.mobile} onChangeText={onChangeMobile}
               keyboardType="phone-pad" maxLength={10} colors={colors} inputRef={mobileRef} returnKeyType="next"
-              onSubmitEditing={() => siteRef.current?.focus()} />
-            <Field label="Site Location" placeholder="e.g. Site-A Delhi" value={form.siteLocation} onChangeText={onChangeSite}
-              colors={colors} inputRef={siteRef} returnKeyType="next"
               onSubmitEditing={() => contractorRef.current?.focus()} />
+            {isOperator && inheritedSite ? (
+              <View style={styles.siteRow}>
+                <Text style={[styles.siteLabel, { color: colors.textSecondary }]}>Site Location</Text>
+                <View style={[styles.siteBadge, { backgroundColor: colors.primary + "15", borderColor: colors.primary + "30" }]}>
+                  <Ionicons name="business-outline" size={13} color={colors.primary} />
+                  <Text style={[styles.siteValue, { color: colors.primary }]}>{inheritedSite}</Text>
+                  <View style={[styles.autoTag, { backgroundColor: colors.primary + "22" }]}>
+                    <Text style={[styles.autoTagText, { color: colors.primary }]}>auto</Text>
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <Field label="Site Location" placeholder="e.g. Site-A Delhi" value={form.siteLocation} onChangeText={onChangeSite}
+                colors={colors} inputRef={siteRef} returnKeyType="next"
+                onSubmitEditing={() => contractorRef.current?.focus()} />
+            )}
           </View>
 
           {/* ── Employment Details ── */}
@@ -367,7 +398,7 @@ export default function RegisterWorkerScreen() {
               </>
             )}
           </TouchableOpacity>
-        </ScrollView>
+        </ScrollView>}
       </View>
     </DrawerOverlay>
   );
@@ -379,6 +410,14 @@ const styles = StyleSheet.create({
   section: { padding: 16, borderWidth: 1, gap: 14 },
   secRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   secTitle: { flex: 1, fontSize: 15, fontWeight: "700" },
+
+  /* Site Location read-only badge (operators) */
+  siteRow: { gap: 5 },
+  siteLabel: { fontSize: 12, fontWeight: "600" },
+  siteBadge: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1 },
+  siteValue: { flex: 1, fontSize: 14, fontWeight: "600" },
+  autoTag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  autoTagText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
 
   progBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 99 },
   progText: { fontSize: 13, fontWeight: "800" },

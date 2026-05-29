@@ -21,6 +21,8 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
+import UnauthorizedDeviceScreen from "@/components/UnauthorizedDeviceScreen";
+import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 
 /** Simulated face recognition result — replace body with real SDK call. */
@@ -35,6 +37,7 @@ type ScanPhase = "idle" | "scanning" | "identified" | "no_match";
 export default function AttendanceScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   const [phase, setPhase]   = useState<ScanPhase>("idle");
   const [matched, setMatched] = useState<typeof MOCK_WORKERS[0] | null>(null);
@@ -104,15 +107,38 @@ export default function AttendanceScreen() {
   };
 
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom + 20;
+  const isOperator = user?.role === "operator";
+  const deviceBlocked = isOperator && user?.isDeviceAuthorized === false;
 
   return (
     <DrawerOverlay>
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Mark Attendance" showBack onBack={() => router.back()} />
-        <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
-          showsVerticalScrollIndicator={false}
-        >
+
+        {/* Device authorization gate */}
+        {deviceBlocked && (
+          <UnauthorizedDeviceScreen reason={user?.deviceVerifyReason} />
+        )}
+
+        {/* Operator plaza context banner */}
+        {!deviceBlocked && isOperator && user?.plazaName && (
+          <View style={[styles.contextBanner, { backgroundColor: colors.primary + "12", borderBottomColor: colors.primary + "22" }]}>
+            <Ionicons name="business-outline" size={14} color={colors.primary} />
+            <Text style={[styles.contextText, { color: colors.primary }]}>
+              {user.plazaName} · {user.userId}
+            </Text>
+            <View style={[styles.authBadge, { backgroundColor: colors.success + "22" }]}>
+              <Ionicons name="shield-checkmark-outline" size={11} color={colors.success} />
+              <Text style={[styles.authBadgeText, { color: colors.success }]}>Authorized</Text>
+            </View>
+          </View>
+        )}
+
+        {!deviceBlocked && (
+          <ScrollView
+            contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
+            showsVerticalScrollIndicator={false}
+          >
           {/* ── Camera viewfinder ── */}
           <View style={[styles.cameraWrap, { borderColor: colors.primary + "66", backgroundColor: colors.card }]}>
             <View style={[styles.cameraView, { backgroundColor: colors.header }]}>
@@ -269,7 +295,8 @@ export default function AttendanceScreen() {
               </>
             )}
           </TouchableOpacity>
-        </ScrollView>
+          </ScrollView>
+        )}
       </View>
     </DrawerOverlay>
   );
@@ -338,4 +365,10 @@ const styles = StyleSheet.create({
   /* Scan button */
   scanBtn: { height: 56, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12 },
   scanBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+
+  /* Operator context banner */
+  contextBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1 },
+  contextText: { flex: 1, fontSize: 12, fontWeight: "600" },
+  authBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
+  authBadgeText: { fontSize: 11, fontWeight: "700" },
 });

@@ -9,6 +9,9 @@ export interface Worker {
   contractorName: string;
   employeeType: string;
   siteLocation: string;
+  plazaId?: string;
+  operatorId?: string;
+  deviceToken?: string;
   createdAt?: string;
 }
 
@@ -21,6 +24,9 @@ export interface AttendanceRecord {
   time: string;
   status: "present" | "absent";
   syncStatus: "pending" | "synced";
+  plazaId?: string;
+  operatorId?: string;
+  deviceToken?: string;
   createdAt?: string;
 }
 
@@ -102,6 +108,20 @@ async function initDb(db: SQLite.SQLiteDatabase) {
       value TEXT NOT NULL
     );
   `);
+
+  /* Safe schema migration — add traceability columns if not present */
+  const migrations = [
+    "ALTER TABLE workers ADD COLUMN plazaId TEXT DEFAULT ''",
+    "ALTER TABLE workers ADD COLUMN operatorId TEXT DEFAULT ''",
+    "ALTER TABLE workers ADD COLUMN deviceToken TEXT DEFAULT ''",
+    "ALTER TABLE attendance ADD COLUMN plazaId TEXT DEFAULT ''",
+    "ALTER TABLE attendance ADD COLUMN operatorId TEXT DEFAULT ''",
+    "ALTER TABLE attendance ADD COLUMN deviceToken TEXT DEFAULT ''",
+  ];
+  for (const sql of migrations) {
+    try { await db.execAsync(sql); } catch { /* column already exists */ }
+  }
+
   await seedDummyData(db);
 }
 
@@ -110,54 +130,89 @@ async function seedDummyData(db: SQLite.SQLiteDatabase) {
   if (existing && existing.count > 0) return;
 
   const workers = [
-    { workerId: "WRK001", fullName: "Rajesh Kumar", mobile: "9876543210", department: "Civil", contractorName: "ABC Constructions", employeeType: "Contract", siteLocation: "Site-A Delhi" },
-    { workerId: "WRK002", fullName: "Priya Sharma", mobile: "9876543211", department: "Electrical", contractorName: "XYZ Electricals", employeeType: "Permanent", siteLocation: "Site-B Mumbai" },
-    { workerId: "WRK003", fullName: "Amit Singh", mobile: "9876543212", department: "Plumbing", contractorName: "ABC Constructions", employeeType: "Contract", siteLocation: "Site-A Delhi" },
-    { workerId: "WRK004", fullName: "Sunita Verma", mobile: "9876543213", department: "Civil", contractorName: "DEF Projects", employeeType: "Temporary", siteLocation: "Site-C Pune" },
-    { workerId: "WRK005", fullName: "Mohan Lal", mobile: "9876543214", department: "Security", contractorName: "GHI Security", employeeType: "Contract", siteLocation: "Site-A Delhi" },
-    { workerId: "WRK006", fullName: "Kavitha Nair", mobile: "9876543215", department: "Admin", contractorName: "Internal", employeeType: "Permanent", siteLocation: "Site-B Mumbai" },
+    { workerId: "WRK001", fullName: "Rajesh Kumar",   mobile: "9876543210", department: "Civil",      contractorName: "ABC Constructions", employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "" },
+    { workerId: "WRK002", fullName: "Priya Sharma",   mobile: "9876543211", department: "Electrical", contractorName: "XYZ Electricals",   employeeType: "Permanent", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "" },
+    { workerId: "WRK003", fullName: "Amit Singh",     mobile: "9876543212", department: "Plumbing",   contractorName: "ABC Constructions", employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "" },
+    { workerId: "WRK004", fullName: "Sunita Verma",   mobile: "9876543213", department: "Civil",      contractorName: "DEF Projects",      employeeType: "Temporary", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "" },
+    { workerId: "WRK005", fullName: "Mohan Lal",      mobile: "9876543214", department: "Security",   contractorName: "GHI Security",      employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "" },
+    { workerId: "WRK006", fullName: "Kavitha Nair",   mobile: "9876543215", department: "Admin",      contractorName: "Internal",          employeeType: "Permanent", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "" },
   ];
 
   for (const w of workers) {
     await db.runAsync(
-      "INSERT OR IGNORE INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation) VALUES (?,?,?,?,?,?,?)",
-      [w.workerId, w.fullName, w.mobile, w.department, w.contractorName, w.employeeType, w.siteLocation]
+      "INSERT OR IGNORE INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [w.workerId, w.fullName, w.mobile, w.department, w.contractorName, w.employeeType, w.siteLocation, w.plazaId, w.operatorId, w.deviceToken]
     );
   }
 
-  const today = new Date().toISOString().split("T")[0];
+  const today     = new Date().toISOString().split("T")[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
   const dayBefore = new Date(Date.now() - 172800000).toISOString().split("T")[0];
 
   const attendanceData = [
-    { workerId: 1, date: today, time: "08:32", status: "present", syncStatus: "pending" },
-    { workerId: 2, date: today, time: "08:45", status: "present", syncStatus: "pending" },
-    { workerId: 3, date: today, time: "09:10", status: "present", syncStatus: "synced" },
-    { workerId: 4, date: today, time: "00:00", status: "absent", syncStatus: "synced" },
-    { workerId: 5, date: today, time: "07:58", status: "present", syncStatus: "pending" },
-    { workerId: 1, date: yesterday, time: "08:15", status: "present", syncStatus: "synced" },
-    { workerId: 2, date: yesterday, time: "08:30", status: "present", syncStatus: "synced" },
-    { workerId: 3, date: yesterday, time: "00:00", status: "absent", syncStatus: "synced" },
-    { workerId: 4, date: yesterday, time: "09:00", status: "present", syncStatus: "synced" },
-    { workerId: 5, date: dayBefore, time: "08:20", status: "present", syncStatus: "synced" },
-    { workerId: 6, date: dayBefore, time: "00:00", status: "absent", syncStatus: "synced" },
+    { workerId: 1, date: today,     time: "08:32", status: "present", syncStatus: "pending", plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 2, date: today,     time: "08:45", status: "present", syncStatus: "pending", plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 3, date: today,     time: "09:10", status: "present", syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 4, date: today,     time: "00:00", status: "absent",  syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 5, date: today,     time: "07:58", status: "present", syncStatus: "pending", plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 1, date: yesterday, time: "08:15", status: "present", syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 2, date: yesterday, time: "08:30", status: "present", syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 3, date: yesterday, time: "00:00", status: "absent",  syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 4, date: yesterday, time: "09:00", status: "present", syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 5, date: dayBefore, time: "08:20", status: "present", syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
+    { workerId: 6, date: dayBefore, time: "00:00", status: "absent",  syncStatus: "synced",  plazaId: "PLZ001", operatorId: "OPR001" },
   ];
 
   for (const a of attendanceData) {
     await db.runAsync(
-      "INSERT INTO attendance (workerId, date, time, status, syncStatus) VALUES (?,?,?,?,?)",
-      [a.workerId, a.date, a.time, a.status, a.syncStatus]
+      "INSERT INTO attendance (workerId, date, time, status, syncStatus, plazaId, operatorId) VALUES (?,?,?,?,?,?,?)",
+      [a.workerId, a.date, a.time, a.status, a.syncStatus, a.plazaId, a.operatorId]
     );
   }
 
-  await db.runAsync("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", ["darkMode", "true"]);
-  await db.runAsync("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", ["lastSync", "Never"]);
-  await db.runAsync("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", ["appVersion", "1.0.0"]);
+  await db.runAsync("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)", ["darkMode", "false"]);
 }
 
-export async function getAllWorkers(): Promise<Worker[]> {
+export async function insertWorker(
+  form: {
+    workerId: string; fullName: string; mobile: string;
+    department: string; contractorName: string; employeeType: string; siteLocation: string;
+    plazaId?: string; operatorId?: string; deviceToken?: string;
+  }
+): Promise<number> {
   const db = await getDb();
-  return db.getAllAsync<Worker>("SELECT * FROM workers ORDER BY fullName");
+  const result = await db.runAsync(
+    "INSERT INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    [form.workerId, form.fullName, form.mobile, form.department, form.contractorName, form.employeeType, form.siteLocation, form.plazaId ?? "", form.operatorId ?? "", form.deviceToken ?? ""]
+  );
+  await (await getDb()).runAsync(
+    "INSERT INTO sync_queue (recordType, recordId, status) VALUES (?, ?, ?)",
+    ["worker", result.lastInsertRowId, "pending"]
+  );
+  return result.lastInsertRowId;
+}
+
+export async function insertAttendance(
+  record: {
+    workerId: number; date: string; time: string; status?: string; syncStatus?: string;
+    plazaId?: string; operatorId?: string; deviceToken?: string;
+  }
+): Promise<number> {
+  const db = await getDb();
+  const result = await db.runAsync(
+    "INSERT INTO attendance (workerId, date, time, status, syncStatus, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?)",
+    [
+      record.workerId, record.date, record.time,
+      record.status ?? "present", record.syncStatus ?? "pending",
+      record.plazaId ?? "", record.operatorId ?? "", record.deviceToken ?? "",
+    ]
+  );
+  return result.lastInsertRowId;
+}
+
+export async function getWorkers(): Promise<Worker[]> {
+  const db = await getDb();
+  return db.getAllAsync<Worker>("SELECT * FROM workers ORDER BY createdAt DESC");
 }
 
 export async function getWorkerById(id: number): Promise<Worker | null> {
@@ -165,97 +220,50 @@ export async function getWorkerById(id: number): Promise<Worker | null> {
   return db.getFirstAsync<Worker>("SELECT * FROM workers WHERE id = ?", [id]);
 }
 
-export async function insertWorker(worker: Omit<Worker, "id" | "createdAt">): Promise<number> {
+export async function getAttendanceRecords(): Promise<AttendanceRecord[]> {
   const db = await getDb();
-  const result = await db.runAsync(
-    "INSERT INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation) VALUES (?,?,?,?,?,?,?)",
-    [worker.workerId, worker.fullName, worker.mobile, worker.department, worker.contractorName, worker.employeeType, worker.siteLocation]
+  return db.getAllAsync<AttendanceRecord>(
+    `SELECT a.*, w.fullName as workerName, w.workerId as workerIdCode
+     FROM attendance a
+     LEFT JOIN workers w ON a.workerId = w.id
+     ORDER BY a.createdAt DESC`
   );
-  return result.lastInsertRowId;
+}
+
+export async function getSyncQueue(): Promise<SyncRecord[]> {
+  const db = await getDb();
+  return db.getAllAsync<SyncRecord>("SELECT * FROM sync_queue WHERE status = 'pending' ORDER BY createdAt ASC");
+}
+
+export async function markSynced(recordId: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("UPDATE sync_queue SET status = 'synced' WHERE id = ?", [recordId]);
+}
+
+export async function getAppSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", [key]);
+  return row?.value ?? null;
+}
+
+export async function setAppSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [key, value]);
 }
 
 export async function getAttendanceStats(): Promise<{ total: number; present: number; absent: number; pending: number }> {
   const db = await getDb();
   const today = new Date().toISOString().split("T")[0];
-  const total = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM workers");
-  const present = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM attendance WHERE date = ? AND status = 'present'", [today]);
-  const absent = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM attendance WHERE date = ? AND status = 'absent'", [today]);
-  const pending = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM attendance WHERE syncStatus = 'pending'");
-  return {
-    total: total?.count ?? 0,
-    present: present?.count ?? 0,
-    absent: absent?.count ?? 0,
-    pending: pending?.count ?? 0,
-  };
-}
-
-export async function getAttendanceHistory(filter?: { date?: string; workerId?: string; name?: string }): Promise<AttendanceRecord[]> {
-  const db = await getDb();
-  let query = `
-    SELECT a.*, w.fullName as workerName, w.workerId as workerIdCode
-    FROM attendance a
-    JOIN workers w ON a.workerId = w.id
-    WHERE 1=1
-  `;
-  const params: (string | number)[] = [];
-  if (filter?.date) { query += " AND a.date = ?"; params.push(filter.date); }
-  if (filter?.workerId) { query += " AND w.workerId LIKE ?"; params.push(`%${filter.workerId}%`); }
-  if (filter?.name) { query += " AND w.fullName LIKE ?"; params.push(`%${filter.name}%`); }
-  query += " ORDER BY a.createdAt DESC LIMIT 100";
-  return db.getAllAsync<AttendanceRecord>(query, params);
-}
-
-export async function insertAttendance(record: Omit<AttendanceRecord, "id" | "createdAt">): Promise<number> {
-  const db = await getDb();
-  const result = await db.runAsync(
-    "INSERT INTO attendance (workerId, date, time, status, syncStatus) VALUES (?,?,?,?,?)",
-    [record.workerId, record.date, record.time, record.status, record.syncStatus]
+  const rows = await db.getAllAsync<{ status: string; syncStatus: string; cnt: number }>(
+    `SELECT status, syncStatus, COUNT(*) as cnt FROM attendance WHERE date = ? GROUP BY status, syncStatus`,
+    [today]
   );
-  await db.runAsync("INSERT INTO sync_queue (recordType, recordId, status) VALUES (?, ?, ?)", ["attendance", result.lastInsertRowId, "pending"]);
-  return result.lastInsertRowId;
-}
-
-export async function getWorkerAttendance(workerId: number): Promise<AttendanceRecord[]> {
-  const db = await getDb();
-  return db.getAllAsync<AttendanceRecord>("SELECT * FROM attendance WHERE workerId = ? ORDER BY date DESC", [workerId]);
-}
-
-export async function getFaceImages(workerId: number): Promise<FaceImage[]> {
-  const db = await getDb();
-  return db.getAllAsync<FaceImage>("SELECT * FROM face_images WHERE workerId = ?", [workerId]);
-}
-
-export async function saveFaceImage(image: Omit<FaceImage, "id" | "createdAt">): Promise<number> {
-  const db = await getDb();
-  const result = await db.runAsync(
-    "INSERT OR REPLACE INTO face_images (workerId, imageType, imagePath, captured) VALUES (?,?,?,?)",
-    [image.workerId, image.imageType, image.imagePath, image.captured ? 1 : 0]
-  );
-  return result.lastInsertRowId;
-}
-
-export async function getSyncQueue(): Promise<SyncRecord[]> {
-  const db = await getDb();
-  return db.getAllAsync<SyncRecord>("SELECT * FROM sync_queue ORDER BY createdAt DESC");
-}
-
-export async function markSynced(id: number): Promise<void> {
-  const db = await getDb();
-  await db.runAsync("UPDATE sync_queue SET status = 'synced' WHERE id = ?", [id]);
-}
-
-export async function getWeeklyAttendance(): Promise<{ day: string; count: number }[]> {
-  const db = await getDb();
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000);
-    const dateStr = d.toISOString().split("T")[0];
-    const dayName = d.toLocaleDateString("en", { weekday: "short" });
-    const row = await db.getFirstAsync<{ count: number }>(
-      "SELECT COUNT(*) as count FROM attendance WHERE date = ? AND status = 'present'",
-      [dateStr]
-    );
-    days.push({ day: dayName, count: row?.count ?? 0 });
+  let present = 0; let absent = 0; let pending = 0;
+  for (const r of rows) {
+    if (r.status === "present")  present  += r.cnt;
+    else if (r.status === "absent") absent += r.cnt;
+    if (r.syncStatus === "pending") pending += r.cnt;
   }
-  return days;
+  const total = present + absent;
+  return { total, present, absent, pending };
 }
