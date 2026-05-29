@@ -20,4 +20,16 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, "node_modules"),
 ];
 
+// Add Cross-Origin Isolation headers required by expo-sqlite on web.
+// OPFS (Origin Private File System) needs crossOriginIsolated = true.
+config.server = {
+  enhanceMiddleware: (middleware) => {
+    return (req, res, next) => {
+      res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+      res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+      return middleware(req, res, next);
+    };
+  },
+};
+
 module.exports = config;
