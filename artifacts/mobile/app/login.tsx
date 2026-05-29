@@ -170,7 +170,7 @@ export default function LoginScreen() {
 
           {/* Login button */}
           <TouchableOpacity
-            style={[styles.loginBtn, { backgroundColor: loading ? colors.primaryDark : colors.primary, borderRadius: colors.radius }]}
+            style={[styles.loginBtn, { backgroundColor: loading ? colors.warning : colors.accent, borderRadius: colors.radius }]}
             onPress={handleLogin}
             disabled={loading}
             activeOpacity={0.85}

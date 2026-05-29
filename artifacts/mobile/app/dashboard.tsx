@@ -24,19 +24,19 @@ import { useColors } from "@/hooks/useColors";
 interface Stats { total: number; present: number; absent: number; pending: number }
 
 const OPERATOR_QUICK_ACTIONS = [
-  { label: "Register Worker", icon: "person-add-outline" as const, color: "#7C3AED", route: "/register-worker" },
-  { label: "Mark Attendance", icon: "scan-outline" as const, color: "#3B82F6", route: "/attendance" },
-  { label: "Attendance History", icon: "calendar-outline" as const, color: "#10B981", route: "/attendance-history" },
-  { label: "Sync Data", icon: "cloud-upload-outline" as const, color: "#F59E0B", route: "/sync-center" },
+  { label: "Register Worker", icon: "person-add-outline" as const, color: "#F97316", route: "/register-worker" },
+  { label: "Mark Attendance", icon: "scan-outline" as const, color: "#EA580C", route: "/attendance" },
+  { label: "Attendance History", icon: "calendar-outline" as const, color: "#0B7ED4", route: "/attendance-history" },
+  { label: "Sync Data", icon: "cloud-upload-outline" as const, color: "#16A34A", route: "/sync-center" },
 ];
 
 const ADMIN_QUICK_ACTIONS = [
-  { label: "Manage Plazas", icon: "business-outline" as const, color: "#7C3AED", route: "/admin-toll-plazas" },
-  { label: "Manage Operators", icon: "people-circle-outline" as const, color: "#3B82F6", route: "/admin-operators" },
-  { label: "Allocate Device", icon: "phone-portrait-outline" as const, color: "#10B981", route: "/admin-devices" },
-  { label: "Monitor Attendance", icon: "pulse-outline" as const, color: "#F59E0B", route: "/admin-attendance" },
-  { label: "Security Center", icon: "shield-outline" as const, color: "#EF4444", route: "/admin-security" },
-  { label: "Generate Report", icon: "document-text-outline" as const, color: "#64748B", route: "/reports" },
+  { label: "Manage Plazas", icon: "business-outline" as const, color: "#0B7ED4", route: "/admin-toll-plazas" },
+  { label: "Manage Operators", icon: "people-circle-outline" as const, color: "#0B5EA8", route: "/admin-operators" },
+  { label: "Allocate Device", icon: "phone-portrait-outline" as const, color: "#F97316", route: "/admin-devices" },
+  { label: "Monitor Attendance", icon: "pulse-outline" as const, color: "#0D9488", route: "/admin-attendance" },
+  { label: "Security Center", icon: "shield-outline" as const, color: "#DC2626", route: "/admin-security" },
+  { label: "Generate Report", icon: "document-text-outline" as const, color: "#16A34A", route: "/reports" },
 ];
 
 const RECENT_ACTIVITY = [

@@ -23,7 +23,7 @@ import { useColors } from "@/hooks/useColors";
 
 const DEPT_COLORS: Record<string, string> = {
   Civil: "#3B82F6", Electrical: "#F59E0B", Plumbing: "#10B981",
-  Security: "#EF4444", Admin: "#7C3AED", Default: "#64748B",
+  Security: "#EF4444", Admin: "#0B5EA8", Default: "#607A9B",
 };
 
 function WorkerRow({ worker, onAction }: { worker: Worker & { presentToday?: boolean }; onAction: (action: string, w: Worker) => void }) {

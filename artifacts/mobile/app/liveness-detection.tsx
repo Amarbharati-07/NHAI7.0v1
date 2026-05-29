@@ -25,7 +25,7 @@ import DrawerOverlay from "@/components/DrawerOverlay";
 import { useColors } from "@/hooks/useColors";
 
 const STEPS = [
-  { key: "blink",     label: "Blink Detection",       desc: "Blink your eyes twice naturally",          icon: "eye-outline" as const,           color: "#A78BFA" },
+  { key: "blink",     label: "Blink Detection",       desc: "Blink your eyes twice naturally",          icon: "eye-outline" as const,           color: "#3B9EE8" },
   { key: "headLeft",  label: "Head Movement Left",     desc: "Slowly turn your head to the left",        icon: "arrow-back-outline" as const,    color: "#60A5FA" },
   { key: "headRight", label: "Head Movement Right",    desc: "Slowly turn your head to the right",       icon: "arrow-forward-outline" as const, color: "#34D399" },
   { key: "tracking",  label: "Eye Tracking",           desc: "Follow the moving dot with your eyes",     icon: "scan-circle-outline" as const,   color: "#F59E0B" },

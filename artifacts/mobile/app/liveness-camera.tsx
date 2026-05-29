@@ -44,7 +44,7 @@ const STEPS = [
     action: "Blink your eyes twice naturally",
     instruction: "Keep your face centred in the oval and blink both eyes twice.",
     icon: "eye-outline" as const,
-    color: "#A78BFA",
+    color: "#3B9EE8",
   },
   {
     key: "headLeft",
@@ -196,8 +196,8 @@ export default function LivenessCameraScreen() {
   /* ── Permission not yet known ── */
   if (!permission) {
     return (
-      <View style={[styles.root, styles.centre, { backgroundColor: "#050B1F" }]}>
-        <ActivityIndicator size="large" color="#7C3AED" />
+      <View style={[styles.root, styles.centre, { backgroundColor: "#0C1A2E" }]}>
+        <ActivityIndicator size="large" color="#F97316" />
         <Text style={styles.permText}>Requesting camera access…</Text>
       </View>
     );
@@ -206,16 +206,16 @@ export default function LivenessCameraScreen() {
   /* ── Permission denied ── */
   if (!permission.granted) {
     return (
-      <View style={[styles.root, styles.centre, { backgroundColor: "#050B1F", paddingHorizontal: 32 }]}>
-        <View style={[styles.permIconWrap, { backgroundColor: "#7C3AED22" }]}>
-          <Ionicons name="camera-outline" size={48} color="#A78BFA" />
+      <View style={[styles.root, styles.centre, { backgroundColor: "#0C1A2E", paddingHorizontal: 32 }]}>
+        <View style={[styles.permIconWrap, { backgroundColor: "#F9731622" }]}>
+          <Ionicons name="camera-outline" size={48} color="#F97316" />
         </View>
         <Text style={styles.permTitle}>Camera Access Required</Text>
         <Text style={styles.permSub}>
           Liveness detection needs the front camera to verify you are a real, present person.
         </Text>
         <TouchableOpacity
-          style={[styles.permBtn, { backgroundColor: "#7C3AED" }]}
+          style={[styles.permBtn, { backgroundColor: "#F97316" }]}
           onPress={requestPermission}
           activeOpacity={0.85}
         >
@@ -260,7 +260,7 @@ export default function LivenessCameraScreen() {
           ) : null}
         </View>
 
-        <View style={[styles.stepBadge, { backgroundColor: "rgba(124,58,237,0.55)" }]}>
+        <View style={[styles.stepBadge, { backgroundColor: "rgba(11,94,168,0.75)" }]}>
           <Text style={styles.stepBadgeText}>{stepIndex + 1}/{STEPS.length}</Text>
         </View>
       </View>
@@ -280,7 +280,7 @@ export default function LivenessCameraScreen() {
                   backgroundColor: done
                     ? "#10B981"
                     : active
-                    ? "#7C3AED"
+                    ? "#F97316"
                     : "rgba(255,255,255,0.2)",
                 },
               ]}
@@ -375,7 +375,7 @@ export default function LivenessCameraScreen() {
         <View style={styles.ctaRow}>
           {phase === "ready" && (
             <TouchableOpacity
-              style={[styles.ctaBtn, { backgroundColor: "#7C3AED" }]}
+              style={[styles.ctaBtn, { backgroundColor: "#F97316" }]}
               onPress={handleStart}
               activeOpacity={0.85}
             >

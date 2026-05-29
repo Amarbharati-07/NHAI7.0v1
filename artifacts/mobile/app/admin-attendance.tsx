@@ -29,7 +29,7 @@ const MISSING_ALERTS = [
 
 const REPORT_TYPES = [
   { label: "Daily Report", icon: "today-outline" as const, color: "#3B82F6", desc: "Today's full attendance summary" },
-  { label: "Weekly Report", icon: "calendar-outline" as const, color: "#7C3AED", desc: "Last 7 days attendance analysis" },
+  { label: "Weekly Report", icon: "calendar-outline" as const, color: "#0B7ED4", desc: "Last 7 days attendance analysis" },
   { label: "Monthly Report", icon: "bar-chart-outline" as const, color: "#10B981", desc: "Month-wise attendance breakdown" },
   { label: "Custom Range", icon: "options-outline" as const, color: "#F59E0B", desc: "Select custom date range" },
   { label: "Plaza-wise Report", icon: "business-outline" as const, color: "#EF4444", desc: "Individual plaza attendance" },

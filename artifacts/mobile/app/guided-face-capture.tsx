@@ -263,7 +263,7 @@ export default function GuidedFaceCaptureScreen() {
 
   /* ═══════════════ GUIDE PHASE ════════════════ */
   return (
-    <View style={[styles.root, { backgroundColor: "#050B1F" }]}>
+    <View style={[styles.root, { backgroundColor: "#0C1A2E" }]}>
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: topPad }]}>
