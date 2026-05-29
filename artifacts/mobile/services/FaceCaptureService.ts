@@ -136,6 +136,14 @@ export function getSessionCaptures(
   return out;
 }
 
+/**
+ * Store a CaptureResult directly into the session.
+ * Used by the guided workflow which handles its own camera/file logic.
+ */
+export function setCapture(sessionId: string, result: CaptureResult): void {
+  getSession(sessionId).set(result.pose, result);
+}
+
 /** Count how many poses have been captured in this session. */
 export function getCaptureCount(sessionId: string): number {
   return getSession(sessionId).size;

@@ -52,6 +52,7 @@ export default function RootLayout() {
                     <Stack.Screen name="register-worker" />
                     <Stack.Screen name="face-capture" />
                     <Stack.Screen name="camera-capture" options={{ presentation: "fullScreenModal" }} />
+                    <Stack.Screen name="guided-face-capture" options={{ presentation: "fullScreenModal" }} />
                     <Stack.Screen name="attendance" />
                     <Stack.Screen name="liveness-detection" />
                     <Stack.Screen name="attendance-success" />
