@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
-import React, { useState } from "react";
+import { Image } from "expo-image";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useId, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,26 +17,29 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
+import {
+  type FacePose,
+  POSE_CONFIGS,
+  clearSession,
+  getCaptureCount,
+  getSessionCaptures,
+  isSessionComplete,
+  saveFaceImagesToDb,
+} from "@/services/FaceCaptureService";
 import { insertWorker } from "@/services/database";
 import { useColors } from "@/hooks/useColors";
+
+const TOTAL_POSES = POSE_CONFIGS.length; // 8
 
 const DEPARTMENTS = ["Civil", "Electrical", "Plumbing", "Security", "Admin", "Mechanical", "IT"];
 const EMP_TYPES = ["Contract", "Permanent", "Temporary", "Daily Wage"];
 
-const FACE_POSES = [
-  { key: "front", label: "Front Face", icon: "person" as const },
-  { key: "left", label: "Left Profile", icon: "arrow-back" as const },
-  { key: "right", label: "Right Profile", icon: "arrow-forward" as const },
-  { key: "up", label: "Face Up", icon: "arrow-up" as const },
-  { key: "down", label: "Face Down", icon: "arrow-down" as const },
-  { key: "smile", label: "Smile", icon: "happy-outline" as const },
-  { key: "blink", label: "Blink", icon: "eye-off-outline" as const },
-  { key: "neutral", label: "Neutral", icon: "remove-outline" as const },
-];
-
 export default function RegisterWorkerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+
+  /* Stable session ID for this registration attempt */
+  const sessionId = useRef(`sess_${Date.now()}`).current;
 
   const [form, setForm] = useState({
     workerId: "",
@@ -46,18 +50,30 @@ export default function RegisterWorkerScreen() {
     employeeType: "",
     siteLocation: "",
   });
-  const [captured, setCaptured] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
 
+  /* Captured images — refreshed every time the screen comes back into focus */
+  const [captures, setCaptures] = useState<Partial<Record<FacePose, string>>>({});
+  const captureCount = Object.keys(captures).length;
+  const allCaptured = captureCount === TOTAL_POSES;
+
+  /* Refresh capture state whenever we return from the camera screen */
+  useFocusEffect(
+    useCallback(() => {
+      const session = getSessionCaptures(sessionId);
+      const uris: Partial<Record<FacePose, string>> = {};
+      for (const [pose, result] of Object.entries(session)) {
+        uris[pose as FacePose] = result.uri;
+      }
+      setCaptures(uris);
+    }, [sessionId])
+  );
+
+  /* ─── helpers ─── */
   const set = (field: string, val: string) => {
     setForm((f) => ({ ...f, [field]: val }));
     setErrors((e) => ({ ...e, [field]: "" }));
-  };
-
-  const simulateCapture = (key: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setCaptured((c) => ({ ...c, [key]: true }));
   };
 
   const validate = () => {
@@ -70,14 +86,30 @@ export default function RegisterWorkerScreen() {
     return Object.keys(e).length === 0;
   };
 
+  /* ─── open camera for a pose ─── */
+  const openCamera = (pose: FacePose) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push({
+      pathname: "/camera-capture",
+      params: { pose, sessionId },
+    } as never);
+  };
+
+  /* ─── submit ─── */
   const handleSubmit = async () => {
     if (!validate()) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
+    if (!allCaptured) {
+      Alert.alert("Face Capture Required", "Please capture all 8 face poses before registering the worker.");
+      return;
+    }
     setLoading(true);
     try {
-      await insertWorker(form);
+      const workerId = await insertWorker(form);
+      await saveFaceImagesToDb(workerId, sessionId);
+      await clearSession(sessionId);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Success", `Worker ${form.fullName} registered successfully!`, [
         { text: "OK", onPress: () => router.back() },
@@ -91,7 +123,13 @@ export default function RegisterWorkerScreen() {
 
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom + 20;
 
-  const Field = ({ field, label, placeholder, keyboardType = "default", maxLength }: { field: string; label: string; placeholder: string; keyboardType?: string; maxLength?: number }) => (
+  /* ─── sub-components ─── */
+  const Field = ({
+    field, label, placeholder, keyboardType = "default", maxLength,
+  }: {
+    field: string; label: string; placeholder: string;
+    keyboardType?: string; maxLength?: number;
+  }) => (
     <View style={styles.fieldGroup}>
       <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
       <View style={[styles.inputWrap, { backgroundColor: colors.surface, borderColor: errors[field] ? colors.destructive : colors.border }]}>
@@ -131,15 +169,15 @@ export default function RegisterWorkerScreen() {
     </View>
   );
 
-  const capturedCount = Object.values(captured).filter(Boolean).length;
-
   return (
     <DrawerOverlay>
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Register Worker" showBack onBack={() => router.back()} />
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]} showsVerticalScrollIndicator={false}>
-
-          {/* Worker Info */}
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ── Worker info ── */}
           <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="person-outline" size={18} color={colors.accent} />
@@ -151,7 +189,7 @@ export default function RegisterWorkerScreen() {
             <Field field="siteLocation" label="Site Location" placeholder="e.g. Site-A Delhi" />
           </View>
 
-          {/* Employment Info */}
+          {/* ── Employment info ── */}
           <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="briefcase-outline" size={18} color={colors.accent} />
@@ -162,61 +200,135 @@ export default function RegisterWorkerScreen() {
             <SelectField field="employeeType" label="Employee Type *" options={EMP_TYPES} />
           </View>
 
-          {/* Face Capture */}
+          {/* ── Face Capture ── */}
           <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="scan-outline" size={18} color={colors.accent} />
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Face Capture</Text>
-              <View style={[styles.progressPill, { backgroundColor: colors.primary + "22" }]}>
-                <Text style={[styles.progressText, { color: colors.accent }]}>{capturedCount}/{FACE_POSES.length}</Text>
+              {/* Progress badge */}
+              <View style={[
+                styles.progressBadge,
+                { backgroundColor: allCaptured ? colors.successBg : colors.primary + "22" },
+              ]}>
+                {allCaptured && <Ionicons name="checkmark" size={12} color={colors.success} />}
+                <Text style={[styles.progressText, { color: allCaptured ? colors.success : colors.accent }]}>
+                  {captureCount}/{TOTAL_POSES}
+                </Text>
               </View>
             </View>
+
+            {/* Progress bar */}
+            <View style={[styles.progressBarBg, { backgroundColor: colors.surface }]}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: `${(captureCount / TOTAL_POSES) * 100}%` as never,
+                    backgroundColor: allCaptured ? colors.success : colors.primary,
+                  },
+                ]}
+              />
+            </View>
+
             <Text style={[styles.faceSub, { color: colors.textSecondary }]}>
-              Face recognition model will be integrated here. Tap each pose to mark as captured.
+              Tap each pose card to open the camera and capture. All 8 poses are required.
             </Text>
+
+            {/* Pose grid */}
             <View style={styles.faceGrid}>
-              {FACE_POSES.map((pose) => {
-                const done = !!captured[pose.key];
+              {POSE_CONFIGS.map((pose) => {
+                const capturedUri = captures[pose.key];
+                const done = !!capturedUri;
                 return (
                   <TouchableOpacity
                     key={pose.key}
-                    style={[styles.faceCard, { backgroundColor: done ? colors.primary + "22" : colors.surface, borderColor: done ? colors.primary : colors.border, borderRadius: colors.radius }]}
-                    onPress={() => simulateCapture(pose.key)}
+                    style={[
+                      styles.faceCard,
+                      {
+                        borderColor: done ? colors.success : colors.border,
+                        backgroundColor: done ? colors.successBg + "44" : colors.surface,
+                        borderRadius: colors.radius,
+                      },
+                    ]}
+                    onPress={() => openCamera(pose.key)}
                     activeOpacity={0.75}
                   >
-                    <View style={[styles.faceIconWrap, { backgroundColor: done ? colors.primary : colors.muted }]}>
-                      {done
-                        ? <Ionicons name="checkmark" size={20} color="#fff" />
-                        : <Ionicons name={pose.icon} size={20} color={colors.textSecondary} />
-                      }
-                    </View>
-                    <Text style={[styles.faceLabel, { color: done ? colors.accent : colors.textSecondary }]}>{pose.label}</Text>
+                    {done && capturedUri ? (
+                      /* Captured — show thumbnail */
+                      <>
+                        <Image
+                          source={{ uri: capturedUri }}
+                          style={styles.thumbnail}
+                          contentFit="cover"
+                          cachePolicy="memory-disk"
+                        />
+                        {/* Green checkmark overlay */}
+                        <View style={[styles.checkOverlay, { backgroundColor: colors.success }]}>
+                          <Ionicons name="checkmark" size={12} color="#fff" />
+                        </View>
+                        {/* Retake hint */}
+                        <View style={[styles.retakeHint, { backgroundColor: "rgba(0,0,0,0.55)" }]}>
+                          <Ionicons name="camera-outline" size={10} color="#fff" />
+                        </View>
+                      </>
+                    ) : (
+                      /* Not captured — show icon + label */
+                      <>
+                        <View style={[styles.faceIconWrap, { backgroundColor: colors.primary + "22" }]}>
+                          <Ionicons name={pose.icon as keyof typeof Ionicons.glyphMap} size={22} color={colors.accent} />
+                        </View>
+                      </>
+                    )}
+                    <Text style={[styles.faceLabel, { color: done ? colors.success : colors.textSecondary }]}>
+                      {pose.label}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
-            <View style={[styles.placeholderBanner, { backgroundColor: colors.primary + "11", borderColor: colors.primary + "33" }]}>
-              <Ionicons name="information-circle-outline" size={16} color={colors.accent} />
-              <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
-                Face Recognition API will be integrated here for live capture
-              </Text>
-            </View>
+
+            {/* All captured status */}
+            {allCaptured && (
+              <View style={[styles.allDoneBanner, { backgroundColor: colors.successBg, borderColor: colors.success + "44" }]}>
+                <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                <Text style={[styles.allDoneText, { color: colors.success }]}>
+                  All 8 face poses captured successfully!
+                </Text>
+              </View>
+            )}
           </View>
 
-          {/* Submit */}
+          {/* ── Submit button ── */}
           <TouchableOpacity
-            style={[styles.submitBtn, { backgroundColor: loading ? colors.primaryDark : colors.primary, borderRadius: colors.radius }]}
+            style={[
+              styles.submitBtn,
+              {
+                backgroundColor:
+                  !allCaptured || loading ? colors.muted : colors.primary,
+                borderRadius: colors.radius,
+                opacity: !allCaptured ? 0.55 : 1,
+              },
+            ]}
             onPress={handleSubmit}
-            disabled={loading}
+            disabled={loading || !allCaptured}
             activeOpacity={0.85}
           >
-            {loading
-              ? <ActivityIndicator color="#fff" />
-              : <>
-                  <Ionicons name="save-outline" size={20} color="#fff" />
-                  <Text style={styles.submitText}>Register Worker</Text>
-                </>
-            }
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons
+                  name={allCaptured ? "save-outline" : "lock-closed-outline"}
+                  size={20}
+                  color="#fff"
+                />
+                <Text style={styles.submitText}>
+                  {allCaptured
+                    ? "Register Worker"
+                    : `Capture ${TOTAL_POSES - captureCount} more pose${TOTAL_POSES - captureCount !== 1 ? "s" : ""} to enable`}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -227,11 +339,86 @@ export default function RegisterWorkerScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 16, gap: 16 },
+
   section: { padding: 16, borderWidth: 1, gap: 14 },
   sectionHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
   sectionTitle: { flex: 1, fontSize: 15, fontWeight: "700" },
-  progressPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99 },
-  progressText: { fontSize: 12, fontWeight: "700" },
+
+  progressBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 99,
+  },
+  progressText: { fontSize: 13, fontWeight: "800" },
+
+  progressBarBg: { height: 5, borderRadius: 3, overflow: "hidden" },
+  progressBarFill: { height: "100%", borderRadius: 3 },
+
+  faceSub: { fontSize: 12, lineHeight: 18, marginTop: -6 },
+
+  faceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  faceCard: {
+    width: "22%",
+    aspectRatio: 0.85,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    padding: 6,
+    borderWidth: 1.5,
+    gap: 4,
+    overflow: "hidden",
+    position: "relative",
+  },
+  faceIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  thumbnail: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 18,
+    borderRadius: 8,
+  },
+  checkOverlay: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  retakeHint: {
+    position: "absolute",
+    bottom: 18,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  faceLabel: { fontSize: 9, textAlign: "center", fontWeight: "600" },
+
+  allDoneBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  allDoneText: { flex: 1, fontSize: 13, fontWeight: "600" },
+
   fieldGroup: { gap: 5 },
   label: { fontSize: 12, fontWeight: "600" },
   inputWrap: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, height: 48 },
@@ -240,13 +427,13 @@ const styles = StyleSheet.create({
   chipsScroll: { flexGrow: 0 },
   chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 99, borderWidth: 1, marginRight: 8 },
   chipText: { fontSize: 13, fontWeight: "500" },
-  faceSub: { fontSize: 12, lineHeight: 18, marginTop: -6 },
-  faceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  faceCard: { width: "22%", alignItems: "center", padding: 10, borderWidth: 1, gap: 6 },
-  faceIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  faceLabel: { fontSize: 10, textAlign: "center", fontWeight: "500" },
-  placeholderBanner: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 8, borderWidth: 1 },
-  placeholderText: { flex: 1, fontSize: 12 },
-  submitBtn: { height: 56, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
-  submitText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+
+  submitBtn: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  submitText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });

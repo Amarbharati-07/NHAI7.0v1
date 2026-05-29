@@ -14,13 +14,23 @@
       "backgroundColor": "#050B1F"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "SpectraID needs camera access to capture face images for worker registration.",
+        "NSPhotoLibraryUsageDescription": "SpectraID needs photo library access to save captured face images.",
+        "NSPhotoLibraryAddUsageDescription": "SpectraID needs to save captured face images to your photo library."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#050B1F"
-      }
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -34,7 +44,15 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-file-system",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SpectraID needs access to save captured face images.",
+          "cameraPermission": "SpectraID needs camera access to capture face images for worker registration."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
