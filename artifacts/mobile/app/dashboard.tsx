@@ -31,11 +31,12 @@ const OPERATOR_QUICK_ACTIONS = [
 ];
 
 const ADMIN_QUICK_ACTIONS = [
-  { label: "Register Plaza", icon: "business-outline" as const, color: "#7C3AED", route: "/admin-toll-plazas" },
-  { label: "Create Operator", icon: "person-add-outline" as const, color: "#3B82F6", route: "/admin-operators" },
+  { label: "Manage Plazas", icon: "business-outline" as const, color: "#7C3AED", route: "/admin-toll-plazas" },
+  { label: "Manage Operators", icon: "people-circle-outline" as const, color: "#3B82F6", route: "/admin-operators" },
   { label: "Allocate Device", icon: "phone-portrait-outline" as const, color: "#10B981", route: "/admin-devices" },
-  { label: "Register Worker", icon: "people-outline" as const, color: "#F59E0B", route: "/admin-workers" },
-  { label: "Generate Report", icon: "document-text-outline" as const, color: "#EF4444", route: "/reports" },
+  { label: "Monitor Attendance", icon: "pulse-outline" as const, color: "#F59E0B", route: "/admin-attendance" },
+  { label: "Security Center", icon: "shield-outline" as const, color: "#EF4444", route: "/admin-security" },
+  { label: "Generate Report", icon: "document-text-outline" as const, color: "#64748B", route: "/reports" },
 ];
 
 const RECENT_ACTIVITY = [

@@ -23,23 +23,27 @@ interface NavItem {
   badgeColor?: string;
 }
 
-const commonItems: NavItem[] = [
+const sharedItems: NavItem[] = [
   { label: "Dashboard", icon: "grid-outline", route: "/dashboard" },
+  { label: "Settings", icon: "settings-outline", route: "/settings" },
+];
+
+const operatorItems: NavItem[] = [
   { label: "Register Worker", icon: "person-add-outline", route: "/register-worker" },
   { label: "Mark Attendance", icon: "scan-outline", route: "/attendance" },
   { label: "Attendance History", icon: "calendar-outline", route: "/attendance-history" },
   { label: "Sync Center", icon: "cloud-upload-outline", route: "/sync-center" },
   { label: "Reports", icon: "bar-chart-outline", route: "/reports" },
-  { label: "Settings", icon: "settings-outline", route: "/settings" },
 ];
 
 const adminItems: NavItem[] = [
   { label: "Toll Plaza Management", icon: "business-outline", route: "/admin-toll-plazas" },
-  { label: "Device Allocation", icon: "phone-portrait-outline", route: "/admin-devices" },
   { label: "Operator Management", icon: "people-circle-outline", route: "/admin-operators" },
+  { label: "Device Allocation", icon: "phone-portrait-outline", route: "/admin-devices" },
   { label: "Worker Management", icon: "people-outline", route: "/admin-workers" },
-  { label: "Security Center", icon: "shield-outline", route: "/admin-security", badge: "2", badgeColor: "#EF4444" },
   { label: "Attendance Monitor", icon: "pulse-outline", route: "/admin-attendance" },
+  { label: "Security Center", icon: "shield-outline", route: "/admin-security", badge: "2", badgeColor: "#EF4444" },
+  { label: "Reports & Analytics", icon: "bar-chart-outline", route: "/reports" },
 ];
 
 function NavRow({ item, onPress }: { item: NavItem; onPress: () => void }) {
@@ -114,13 +118,23 @@ export default function DrawerContent() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 8 }]}
       >
-        {/* Standard Navigation */}
+        {/* Shared Navigation */}
         <View style={styles.navSection}>
           <Text style={[styles.navGroupLabel, { color: colors.textMuted }]}>NAVIGATION</Text>
-          {commonItems.map((item) => (
+          {sharedItems.map((item) => (
             <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
           ))}
         </View>
+
+        {/* Operator-only Navigation */}
+        {!isAdmin && (
+          <View style={styles.navSection}>
+            <Text style={[styles.navGroupLabel, { color: colors.textMuted }]}>FIELD OPERATIONS</Text>
+            {operatorItems.map((item) => (
+              <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
+            ))}
+          </View>
+        )}
 
         {/* Admin Control Center */}
         {isAdmin && (
