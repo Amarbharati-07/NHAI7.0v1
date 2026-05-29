@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   Platform,
   ScrollView,
@@ -14,7 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { getWeeklyAttendance } from "@/services/database";
+import { getWeeklyAttendance, getAttendanceRecords, getWorkers } from "@/services/database";
+import { exportAttendanceCSV, exportWeeklyCSV, exportWorkersCSV } from "@/services/reportService";
 import { useColors } from "@/hooks/useColors";
 
 type Period = "daily" | "weekly" | "monthly";
@@ -32,18 +35,53 @@ const MONTHLY_DATA = [
 export default function ReportsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const [period, setPeriod] = useState<Period>("weekly");
+  const [period, setPeriod]     = useState<Period>("weekly");
   const [weeklyData, setWeeklyData] = useState<{ day: string; count: number }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
+  const [exporting, setExporting] = useState<string | null>(null);
+
+  const [liveStats, setLiveStats] = useState({ total: 0, present: 0, absent: 0, rate: "0%" });
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const data = await getWeeklyAttendance();
+      const [data, records, workers] = await Promise.all([
+        getWeeklyAttendance(),
+        getAttendanceRecords(),
+        getWorkers(),
+      ]);
       setWeeklyData(data);
+      const today = new Date().toISOString().split("T")[0];
+      const todayRecs = records.filter((r) => r.date === today);
+      const present = todayRecs.filter((r) => r.status === "present").length;
+      const absent  = todayRecs.filter((r) => r.status === "absent").length;
+      const total   = workers.length;
+      const rate    = total > 0 ? `${Math.round((present / total) * 100)}%` : "0%";
+      setLiveStats({ total, present, absent, rate });
       setLoading(false);
     })();
   }, []);
+
+  const doExport = async (type: "daily" | "weekly" | "workers") => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExporting(type);
+    try {
+      let result: { success: boolean; error?: string };
+      if (type === "daily") {
+        const today = new Date().toISOString().split("T")[0];
+        result = await exportAttendanceCSV({ dateFilter: today, label: "daily_attendance" });
+      } else if (type === "weekly") {
+        result = await exportWeeklyCSV();
+      } else {
+        result = await exportWorkersCSV();
+      }
+      if (!result.success) Alert.alert("Export Failed", result.error ?? "Could not export.");
+    } catch (e) {
+      Alert.alert("Export Failed", (e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const maxCount = Math.max(...weeklyData.map((d) => d.count), 1);
   const CHART_HEIGHT = 140;
@@ -71,12 +109,36 @@ export default function ReportsScreen() {
             ))}
           </View>
 
-          {/* Summary Stats */}
+          {/* Export Buttons */}
+          <View style={styles.exportRow}>
+            {[
+              { key: "daily",   label: "Daily CSV",   icon: "today-outline" as const,   color: colors.accent },
+              { key: "weekly",  label: "Weekly CSV",  icon: "calendar-outline" as const, color: colors.success },
+              { key: "workers", label: "Workers CSV", icon: "people-outline" as const,  color: colors.warning },
+            ].map((btn) => (
+              <TouchableOpacity
+                key={btn.key}
+                style={[styles.exportBtn, { backgroundColor: btn.color + "18", borderColor: btn.color + "44" }]}
+                onPress={() => doExport(btn.key as "daily" | "weekly" | "workers")}
+                disabled={exporting !== null}
+                activeOpacity={0.8}
+              >
+                {exporting === btn.key ? (
+                  <ActivityIndicator size="small" color={btn.color} />
+                ) : (
+                  <Ionicons name="download-outline" size={14} color={btn.color} />
+                )}
+                <Text style={[styles.exportBtnText, { color: btn.color }]}>{btn.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Summary Stats (live) */}
           <View style={styles.summaryRow}>
             {[
-              { label: "Total Workers", value: "6", icon: "people-outline" as const, color: colors.accent },
-              { label: "Avg Attendance", value: "78%", icon: "trending-up-outline" as const, color: colors.success },
-              { label: "Best Day", value: "Mon", icon: "star-outline" as const, color: colors.warning },
+              { label: "Total Workers", value: loading ? "…" : String(liveStats.total), icon: "people-outline" as const, color: colors.accent },
+              { label: "Today Present", value: loading ? "…" : String(liveStats.present), icon: "checkmark-circle-outline" as const, color: colors.success },
+              { label: "Attendance Rate", value: loading ? "…" : liveStats.rate, icon: "trending-up-outline" as const, color: colors.warning },
             ].map((s, i) => (
               <View key={i} style={[styles.summaryCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 <Ionicons name={s.icon} size={20} color={s.color} />
@@ -172,6 +234,9 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: "row", padding: 4, borderRadius: 10, borderWidth: 1 },
   tab: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center" },
   tabText: { fontSize: 13, fontWeight: "600" },
+  exportRow: { flexDirection: "row", gap: 8 },
+  exportBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
+  exportBtnText: { fontSize: 11, fontWeight: "700" },
   summaryRow: { flexDirection: "row", gap: 10 },
   summaryCard: { flex: 1, alignItems: "center", padding: 12, borderWidth: 1, gap: 4 },
   summaryVal: { fontSize: 20, fontWeight: "800" },

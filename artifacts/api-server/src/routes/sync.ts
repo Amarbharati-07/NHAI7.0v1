@@ -15,6 +15,7 @@ router.post("/sync", async (req, res) => {
     attendance: Array<{
       mobileWorkerId: number; workerIdCode?: string; date: string; time: string;
       status?: string; plazaId?: string; operatorId?: string; deviceToken?: string;
+      latitude?: string; longitude?: string;
     }>;
   };
 
@@ -71,6 +72,8 @@ router.post("/sync", async (req, res) => {
         plazaId: a.plazaId ?? "",
         operatorId: a.operatorId ?? "",
         deviceToken: a.deviceToken ?? "",
+        latitude: a.latitude ?? "",
+        longitude: a.longitude ?? "",
       });
       syncedAttendance++;
     } catch (e) {

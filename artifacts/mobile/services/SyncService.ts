@@ -122,6 +122,8 @@ class SyncService {
               plazaId: a.plazaId ?? "",
               operatorId: a.operatorId ?? "",
               deviceToken: a.deviceToken ?? "",
+              latitude: (a as any).latitude != null ? String((a as any).latitude) : "",
+              longitude: (a as any).longitude != null ? String((a as any).longitude) : "",
               syncQueueId: rec.id,
             });
           }

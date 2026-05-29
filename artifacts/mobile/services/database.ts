@@ -738,6 +738,17 @@ export async function getSyncStats(): Promise<{ pending: number; synced: number;
   return { pending, synced, failed, lastSync: lastRow?.createdAt ?? null };
 }
 
+export async function updateWorkerStatus(workerId: number, status: "active" | "inactive"): Promise<void> {
+  if (IS_WEB) {
+    seedWebStore();
+    const w = webStore.workers.find((x) => x.id === workerId);
+    if (w) w.status = status;
+    return;
+  }
+  const db = await getDb();
+  await db.runAsync("UPDATE workers SET status = ? WHERE id = ?", [status, workerId]);
+}
+
 export async function getAttendanceForCSV(): Promise<AttendanceRecord[]> {
   if (IS_WEB) return web_getAttendanceForCSV();
   const db = await getDb();

@@ -114,7 +114,31 @@ export default function AdminWorkersScreen() {
     if (action === "history") router.push({ pathname: "/worker-details", params: { workerId: String(w.id) } });
     else if (action === "transfer") { setSelectedWorker(w); setShowTransferModal(true); }
     else if (action === "reenroll") Alert.alert("Re-Enroll Worker", `Re-enroll "${w.fullName}" for face capture?`, [{ text: "Cancel" }, { text: "Re-Enroll", onPress: () => router.push({ pathname: "/face-capture", params: { workerId: String(w.id) } }) }]);
-    else if (action === "deactivate") Alert.alert("Deactivate Worker", `Deactivate "${w.fullName}"?\nAll future attendance will be disabled.`, [{ text: "Cancel" }, { text: "Deactivate", style: "destructive" }]);
+    else if (action === "deactivate") {
+      Alert.alert(
+        w.status === "inactive" ? "Activate Worker" : "Deactivate Worker",
+        w.status === "inactive"
+          ? `Reactivate "${w.fullName}"? They will appear in attendance lists again.`
+          : `Deactivate "${w.fullName}"?\nAll future attendance will be disabled.`,
+        [
+          { text: "Cancel" },
+          {
+            text: w.status === "inactive" ? "Activate" : "Deactivate",
+            style: w.status === "inactive" ? "default" : "destructive",
+            onPress: async () => {
+              try {
+                const newStatus = w.status === "inactive" ? "active" : "inactive";
+                const { updateWorkerStatus } = await import("@/services/database");
+                await updateWorkerStatus(w.id!, newStatus);
+                onRefresh();
+              } catch {
+                Alert.alert("Error", "Failed to update worker status.");
+              }
+            },
+          },
+        ]
+      );
+    }
   };
 
   const bottomPad = Platform.OS === "web" ? 24 : insets.bottom + 16;
