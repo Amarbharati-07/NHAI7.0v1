@@ -25,6 +25,7 @@ import { AdminDataProvider } from "@/contexts/AdminDataContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { DrawerProvider } from "@/contexts/DrawerContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { syncService } from "@/services/SyncService";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -47,7 +48,10 @@ if (Platform.OS === "web" && typeof window !== "undefined") {
 }
 
 export default function RootLayout() {
-  useEffect(() => {}, []);
+  useEffect(() => {
+    syncService.start();
+    return () => syncService.stop();
+  }, []);
 
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,

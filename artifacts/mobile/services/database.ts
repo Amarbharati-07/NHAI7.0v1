@@ -504,6 +504,21 @@ export async function getWorkerById(id: number): Promise<Worker | null> {
   return db.getFirstAsync<Worker>("SELECT * FROM workers WHERE id = ?", [id]);
 }
 
+export async function getAttendanceById(id: number): Promise<AttendanceRecord | null> {
+  if (IS_WEB) {
+    seedWebStore();
+    const rec = webStore.attendance.find((a) => a.id === id);
+    return rec ? enrichAttendance(rec) : null;
+  }
+  const db = await getDb();
+  return db.getFirstAsync<AttendanceRecord>(
+    `SELECT a.*, w.fullName as workerName, w.workerId as workerIdCode
+     FROM attendance a LEFT JOIN workers w ON a.workerId = w.id
+     WHERE a.id = ?`,
+    [id]
+  );
+}
+
 export async function getAttendanceRecords(): Promise<AttendanceRecord[]> {
   if (IS_WEB) return web_getAttendanceRecords();
   const db = await getDb();
