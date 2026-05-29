@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
@@ -36,11 +36,32 @@ const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "transferred", label: "Transferred" },
 ];
 
-const STATUS_COLORS: Record<WorkerStatus, { bg: string; text: string }> = {
-  active: { bg: "#D1FAE5", text: "#059669" },
-  inactive: { bg: "#FEE2E2", text: "#DC2626" },
-  transferred: { bg: "#FEF3C7", text: "#D97706" },
+const STATUS_META: Record<WorkerStatus, { bg: string; text: string; icon: keyof typeof MaterialIcons.glyphMap }> = {
+  active: { bg: "#D1FAE5", text: "#059669", icon: "check-circle" },
+  inactive: { bg: "#FEE2E2", text: "#DC2626", icon: "cancel" },
+  transferred: { bg: "#FEF3C7", text: "#D97706", icon: "arrow-forward" },
 };
+
+function ActionBtn({
+  icon, label, color, onPress,
+}: {
+  icon: keyof typeof MaterialIcons.glyphMap;
+  label: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity style={[ab.btn, { backgroundColor: color + "15" }]} onPress={onPress} activeOpacity={0.7}>
+      <MaterialIcons name={icon} size={16} color={color} />
+      <Text style={[ab.label, { color }]} numberOfLines={1}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const ab = StyleSheet.create({
+  btn: { flex: 1, alignItems: "center", paddingVertical: 7, borderRadius: 8, gap: 3 },
+  label: { fontSize: 9, fontWeight: "600" },
+});
 
 function WorkerCard({
   worker,
@@ -59,34 +80,37 @@ function WorkerCard({
 }) {
   const colors = useColors();
   const status = (worker.status ?? "active") as WorkerStatus;
-  const sc = STATUS_COLORS[status];
+  const meta = STATUS_META[status];
 
   return (
     <View style={[card.root, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
-      {/* Top row */}
       <View style={card.topRow}>
         <View style={[card.avatar, { backgroundColor: colors.primary + "22" }]}>
-          <Ionicons name="person" size={22} color={colors.accent} />
+          <MaterialIcons name="person" size={24} color={colors.accent} />
         </View>
         <View style={card.info}>
           <Text style={[card.name, { color: colors.foreground }]} numberOfLines={1}>{worker.fullName}</Text>
           <Text style={[card.sub, { color: colors.textSecondary }]}>{worker.workerId} • {worker.department}</Text>
-          <Text style={[card.contractor, { color: colors.textMuted }]} numberOfLines={1}>{worker.contractorName || "No contractor"}</Text>
+          <Text style={[card.contractor, { color: colors.textMuted }]} numberOfLines={1}>
+            {worker.contractorName || "No contractor"}
+          </Text>
         </View>
-        <View style={[card.statusBadge, { backgroundColor: sc.bg }]}>
-          <Text style={[card.statusText, { color: sc.text }]}>{status.charAt(0).toUpperCase() + status.slice(1)}</Text>
+        <View style={[card.statusBadge, { backgroundColor: meta.bg }]}>
+          <MaterialIcons name={meta.icon} size={11} color={meta.text} />
+          <Text style={[card.statusText, { color: meta.text }]}>
+            {status.charAt(0).toUpperCase() + status.slice(1)}
+          </Text>
         </View>
       </View>
 
-      {/* Action buttons */}
       <View style={[card.divider, { backgroundColor: colors.border }]} />
       <View style={card.actions}>
-        <ActionBtn icon="eye-outline" label="View" color={colors.accent} onPress={onView} />
-        <ActionBtn icon="create-outline" label="Edit" color="#3B82F6" onPress={onEdit} />
-        <ActionBtn icon="scan-outline" label="Re-enroll" color="#8B5CF6" onPress={onReenroll} />
-        <ActionBtn icon="calendar-outline" label="History" color="#0D9488" onPress={onHistory} />
+        <ActionBtn icon="visibility" label="View" color={colors.accent} onPress={onView} />
+        <ActionBtn icon="edit" label="Edit" color="#3B82F6" onPress={onEdit} />
+        <ActionBtn icon="face" label="Re-enroll" color="#8B5CF6" onPress={onReenroll} />
+        <ActionBtn icon="history" label="History" color="#0D9488" onPress={onHistory} />
         <ActionBtn
-          icon={status === "active" ? "person-remove-outline" : "person-add-outline"}
+          icon={status === "active" ? "person-remove" : "person-add"}
           label={status === "active" ? "Deactivate" : "Activate"}
           color={status === "active" ? "#DC2626" : "#059669"}
           onPress={onDeactivate}
@@ -96,27 +120,6 @@ function WorkerCard({
   );
 }
 
-function ActionBtn({
-  icon, label, color, onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  color: string;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity style={[ab.btn, { backgroundColor: color + "15" }]} onPress={onPress} activeOpacity={0.7}>
-      <Ionicons name={icon} size={16} color={color} />
-      <Text style={[ab.label, { color }]} numberOfLines={1}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-const ab = StyleSheet.create({
-  btn: { flex: 1, alignItems: "center", paddingVertical: 7, borderRadius: 8, gap: 3 },
-  label: { fontSize: 9, fontWeight: "600" },
-});
-
 const card = StyleSheet.create({
   root: { borderWidth: 1, overflow: "hidden" },
   topRow: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
@@ -125,7 +128,7 @@ const card = StyleSheet.create({
   name: { fontSize: 15, fontWeight: "700" },
   sub: { fontSize: 12 },
   contractor: { fontSize: 11 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99 },
+  statusBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 99 },
   statusText: { fontSize: 11, fontWeight: "700" },
   divider: { height: 1 },
   actions: { flexDirection: "row", padding: 10, gap: 6 },
@@ -168,11 +171,9 @@ export default function WorkerDirectoryScreen() {
   });
 
   const handleDeactivate = useCallback((worker: Worker) => {
-    const id = worker.id!;
     const currentStatus = (worker.status ?? "active") as WorkerStatus;
     const isActive = currentStatus === "active";
     const newStatus: WorkerStatus = isActive ? "inactive" : "active";
-    const actionLabel = isActive ? "deactivate" : "reactivate";
 
     Alert.alert(
       isActive ? "Deactivate Worker" : "Reactivate Worker",
@@ -186,11 +187,11 @@ export default function WorkerDirectoryScreen() {
           style: isActive ? "destructive" : "default",
           onPress: async () => {
             try {
-              await setWorkerStatus(id, newStatus, user?.name ?? "Operator");
+              await setWorkerStatus(worker.id!, newStatus, user?.name ?? "Operator");
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               load();
             } catch {
-              Alert.alert("Error", `Failed to ${actionLabel} worker.`);
+              Alert.alert("Error", "Failed to update worker status.");
             }
           },
         },
@@ -219,7 +220,7 @@ export default function WorkerDirectoryScreen() {
         {/* Search + Filter bar */}
         <View style={[s.filterBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <View style={[s.searchRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Ionicons name="search-outline" size={16} color={colors.textMuted} />
+            <MaterialIcons name="search" size={18} color={colors.textMuted} />
             <TextInput
               style={[s.searchInput, { color: colors.foreground }]}
               placeholder="Search by name or Worker ID…"
@@ -230,12 +231,11 @@ export default function WorkerDirectoryScreen() {
             />
             {search ? (
               <TouchableOpacity onPress={() => setSearch("")}>
-                <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                <MaterialIcons name="close" size={18} color={colors.textMuted} />
               </TouchableOpacity>
             ) : null}
           </View>
 
-          {/* Status filter tabs */}
           <View style={s.filterTabs}>
             {STATUS_FILTERS.map((f) => (
               <TouchableOpacity
@@ -283,7 +283,7 @@ export default function WorkerDirectoryScreen() {
                 onPress={() => router.push("/register-worker" as never)}
                 activeOpacity={0.85}
               >
-                <Ionicons name="person-add-outline" size={14} color="#fff" />
+                <MaterialIcons name="person-add" size={14} color="#fff" />
                 <Text style={s.addBtnText}>Add Worker</Text>
               </TouchableOpacity>
             </View>
@@ -291,7 +291,7 @@ export default function WorkerDirectoryScreen() {
           ListEmptyComponent={
             <View style={s.empty}>
               <View style={[s.emptyIcon, { backgroundColor: colors.surface }]}>
-                <Ionicons name="people-outline" size={40} color={colors.textMuted} />
+                <MaterialIcons name="people" size={40} color={colors.textMuted} />
               </View>
               <Text style={[s.emptyTitle, { color: colors.foreground }]}>No workers found</Text>
               <Text style={[s.emptySub, { color: colors.textMuted }]}>
@@ -309,7 +309,7 @@ const s = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   filterBar: { padding: 12, gap: 10, borderBottomWidth: 1 },
-  searchRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, height: 42, borderWidth: 1, borderRadius: 10 },
+  searchRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, height: 44, borderWidth: 1, borderRadius: 10 },
   searchInput: { flex: 1, fontSize: 13 },
   filterTabs: { flexDirection: "row", gap: 6 },
   filterTab: { flex: 1, paddingVertical: 7, borderRadius: 99, borderWidth: 1, alignItems: "center" },

@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React from "react";
@@ -17,34 +17,34 @@ import { useColors } from "@/hooks/useColors";
 
 interface NavItem {
   label: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof MaterialIcons.glyphMap;
   route: string;
   badge?: string;
   badgeColor?: string;
 }
 
 const sharedItems: NavItem[] = [
-  { label: "Dashboard", icon: "grid-outline", route: "/dashboard" },
-  { label: "Settings", icon: "settings-outline", route: "/settings" },
+  { label: "Dashboard", icon: "dashboard", route: "/dashboard" },
+  { label: "Settings", icon: "settings", route: "/settings" },
 ];
 
 const operatorItems: NavItem[] = [
-  { label: "Worker Directory", icon: "people-outline", route: "/worker-directory" },
-  { label: "Register Worker", icon: "person-add-outline", route: "/register-worker" },
-  { label: "Mark Attendance", icon: "scan-outline", route: "/attendance" },
-  { label: "Attendance History", icon: "calendar-outline", route: "/attendance-history" },
-  { label: "Sync Center", icon: "cloud-upload-outline", route: "/sync-center" },
-  { label: "Reports", icon: "bar-chart-outline", route: "/reports" },
+  { label: "Worker Directory", icon: "people", route: "/worker-directory" },
+  { label: "Register Worker", icon: "person-add", route: "/register-worker" },
+  { label: "Mark Attendance", icon: "face", route: "/attendance" },
+  { label: "Attendance History", icon: "history", route: "/attendance-history" },
+  { label: "Sync Center", icon: "cloud-sync", route: "/sync-center" },
+  { label: "Reports", icon: "analytics", route: "/reports" },
 ];
 
 const adminItems: NavItem[] = [
-  { label: "Toll Plaza Management", icon: "business-outline", route: "/admin-toll-plazas" },
-  { label: "Operator Management", icon: "people-circle-outline", route: "/admin-operators" },
-  { label: "Device Allocation", icon: "phone-portrait-outline", route: "/admin-devices" },
-  { label: "Worker Management", icon: "people-outline", route: "/admin-workers" },
-  { label: "Attendance Monitor", icon: "pulse-outline", route: "/admin-attendance" },
-  { label: "Security Center", icon: "shield-outline", route: "/admin-security", badge: "2", badgeColor: "#EF4444" },
-  { label: "Reports & Analytics", icon: "bar-chart-outline", route: "/reports" },
+  { label: "Toll Plaza Management", icon: "business", route: "/admin-toll-plazas" },
+  { label: "Operator Management", icon: "supervisor-account", route: "/admin-operators" },
+  { label: "Device Allocation", icon: "smartphone", route: "/admin-devices" },
+  { label: "Worker Management", icon: "settings", route: "/admin-workers" },
+  { label: "Attendance Monitor", icon: "monitor", route: "/admin-attendance" },
+  { label: "Security Center", icon: "security", route: "/admin-security", badge: "2", badgeColor: "#EF4444" },
+  { label: "Reports & Analytics", icon: "analytics", route: "/reports" },
 ];
 
 function NavRow({ item, onPress }: { item: NavItem; onPress: () => void }) {
@@ -56,7 +56,7 @@ function NavRow({ item, onPress }: { item: NavItem; onPress: () => void }) {
       activeOpacity={0.7}
     >
       <View style={[styles.navIconWrap, { backgroundColor: colors.primary + "22" }]}>
-        <Ionicons name={item.icon} size={20} color={colors.accent} />
+        <MaterialIcons name={item.icon} size={20} color={colors.accent} />
       </View>
       <Text style={[styles.navLabel, { color: colors.foreground }]}>{item.label}</Text>
       {item.badge ? (
@@ -64,7 +64,7 @@ function NavRow({ item, onPress }: { item: NavItem; onPress: () => void }) {
           <Text style={styles.navBadgeText}>{item.badge}</Text>
         </View>
       ) : (
-        <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        <MaterialIcons name="chevron-right" size={18} color={colors.mutedForeground} />
       )}
     </TouchableOpacity>
   );
@@ -95,7 +95,7 @@ export default function DrawerContent() {
       {/* Header */}
       <View style={[styles.profileSection, { borderBottomColor: colors.border }]}>
         <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-          <Ionicons name={isAdmin ? "shield-checkmark" : "person"} size={26} color="#fff" />
+          <MaterialIcons name={isAdmin ? "verified-user" : "person"} size={26} color="#fff" />
         </View>
         <View style={styles.profileInfo}>
           <Text style={[styles.profileName, { color: colors.foreground }]}>{user?.name ?? "User"}</Text>
@@ -109,7 +109,7 @@ export default function DrawerContent() {
         </View>
         {isAdmin && (
           <View style={[styles.adminBadge, { backgroundColor: colors.primary + "22", borderColor: colors.primary + "44" }]}>
-            <Ionicons name="star" size={12} color={colors.accent} />
+            <MaterialIcons name="star" size={12} color={colors.accent} />
             <Text style={[styles.adminBadgeText, { color: colors.accent }]}>ADMIN</Text>
           </View>
         )}
@@ -142,7 +142,7 @@ export default function DrawerContent() {
           <View style={[styles.navSection, styles.adminSection]}>
             <View style={[styles.adminDivider, { backgroundColor: colors.primary + "33" }]} />
             <View style={styles.adminSectionHeader}>
-              <Ionicons name="shield-half-outline" size={14} color={colors.accent} />
+              <MaterialIcons name="security" size={14} color={colors.accent} />
               <Text style={[styles.navGroupLabel, { color: colors.accent }]}>ADMIN CONTROL CENTER</Text>
             </View>
             {adminItems.map((item) => (
@@ -154,7 +154,7 @@ export default function DrawerContent() {
         {/* Footer */}
         <View style={[styles.footer, { marginTop: 8 }]}>
           <View style={[styles.versionBadge, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Ionicons name="shield-checkmark" size={14} color={colors.accent} />
+            <MaterialIcons name="verified-user" size={14} color={colors.accent} />
             <Text style={[styles.versionText, { color: colors.textMuted }]}>SpectraID v1.0.0  •  Offline Mode</Text>
           </View>
           <TouchableOpacity
@@ -162,7 +162,7 @@ export default function DrawerContent() {
             onPress={handleLogout}
             activeOpacity={0.8}
           >
-            <Ionicons name="log-out-outline" size={20} color={colors.destructive} />
+            <MaterialIcons name="logout" size={20} color={colors.destructive} />
             <Text style={[styles.logoutText, { color: colors.destructive }]}>Logout</Text>
           </TouchableOpacity>
         </View>

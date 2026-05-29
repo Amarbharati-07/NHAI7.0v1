@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -184,7 +184,7 @@ export default function EditWorkerScreen() {
       Alert.alert("Saved", "Worker details updated successfully.", [
         { text: "OK", onPress: () => router.back() },
       ]);
-    } catch (err) {
+    } catch {
       Alert.alert("Error", "Failed to save changes. Please try again.");
     }
     setSaving(false);
@@ -227,7 +227,7 @@ export default function EditWorkerScreen() {
         >
           {/* Worker identity (read-only) */}
           <View style={[s.idCard, { backgroundColor: colors.primary + "15", borderColor: colors.primary + "30", borderRadius: colors.radius }]}>
-            <Ionicons name="person-circle-outline" size={32} color={colors.accent} />
+            <MaterialIcons name="account-circle" size={34} color={colors.accent} />
             <View style={s.idInfo}>
               <Text style={[s.idName, { color: colors.foreground }]}>{worker.fullName}</Text>
               <Text style={[s.idCode, { color: colors.textSecondary }]}>{worker.workerId}</Text>
@@ -240,7 +240,7 @@ export default function EditWorkerScreen() {
           {/* Personal Info */}
           <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={s.secRow}>
-              <Ionicons name="person-outline" size={18} color={colors.accent} />
+              <MaterialIcons name="person" size={18} color={colors.accent} />
               <Text style={[s.secTitle, { color: colors.foreground }]}>Personal Information</Text>
             </View>
             <Field
@@ -261,7 +261,7 @@ export default function EditWorkerScreen() {
           {/* Employment Details */}
           <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={s.secRow}>
-              <Ionicons name="briefcase-outline" size={18} color={colors.accent} />
+              <MaterialIcons name="work" size={18} color={colors.accent} />
               <Text style={[s.secTitle, { color: colors.foreground }]}>Employment Details</Text>
             </View>
             <Field
@@ -287,7 +287,7 @@ export default function EditWorkerScreen() {
 
           {/* Audit note */}
           <View style={[s.auditNote, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Ionicons name="shield-checkmark-outline" size={15} color={colors.accent} />
+            <MaterialIcons name="verified-user" size={15} color={colors.accent} />
             <Text style={[s.auditNoteText, { color: colors.textSecondary }]}>
               All changes are logged with your name and timestamp for audit purposes.
             </Text>
@@ -304,7 +304,7 @@ export default function EditWorkerScreen() {
               <ActivityIndicator color="#fff" />
             ) : (
               <>
-                <Ionicons name="save-outline" size={20} color="#fff" />
+                <MaterialIcons name="save" size={20} color="#fff" />
                 <Text style={s.saveBtnText}>Save Changes</Text>
               </>
             )}

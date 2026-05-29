@@ -1,4 +1,4 @@
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -24,20 +24,20 @@ import { useColors } from "@/hooks/useColors";
 interface Stats { total: number; present: number; absent: number; pending: number }
 
 const OPERATOR_QUICK_ACTIONS = [
-  { label: "Worker Directory", icon: "people-outline" as const, color: "#0B5EA8", route: "/worker-directory" },
-  { label: "Register Worker", icon: "person-add-outline" as const, color: "#F97316", route: "/register-worker" },
-  { label: "Mark Attendance", icon: "scan-outline" as const, color: "#EA580C", route: "/attendance" },
-  { label: "Attendance History", icon: "calendar-outline" as const, color: "#0B7ED4", route: "/attendance-history" },
-  { label: "Sync Data", icon: "cloud-upload-outline" as const, color: "#16A34A", route: "/sync-center" },
+  { label: "Worker Directory", icon: "people" as const, color: "#0B5EA8", route: "/worker-directory" },
+  { label: "Register Worker", icon: "person-add" as const, color: "#F97316", route: "/register-worker" },
+  { label: "Mark Attendance", icon: "face" as const, color: "#EA580C", route: "/attendance" },
+  { label: "Attendance History", icon: "history" as const, color: "#0B7ED4", route: "/attendance-history" },
+  { label: "Sync Data", icon: "cloud-sync" as const, color: "#16A34A", route: "/sync-center" },
 ];
 
 const ADMIN_QUICK_ACTIONS = [
-  { label: "Manage Plazas", icon: "business-outline" as const, color: "#0B7ED4", route: "/admin-toll-plazas" },
-  { label: "Manage Operators", icon: "people-circle-outline" as const, color: "#0B5EA8", route: "/admin-operators" },
-  { label: "Allocate Device", icon: "phone-portrait-outline" as const, color: "#F97316", route: "/admin-devices" },
-  { label: "Monitor Attendance", icon: "pulse-outline" as const, color: "#0D9488", route: "/admin-attendance" },
-  { label: "Security Center", icon: "shield-outline" as const, color: "#DC2626", route: "/admin-security" },
-  { label: "Generate Report", icon: "document-text-outline" as const, color: "#16A34A", route: "/reports" },
+  { label: "Manage Plazas", icon: "business" as const, color: "#0B7ED4", route: "/admin-toll-plazas" },
+  { label: "Manage Operators", icon: "supervisor-account" as const, color: "#0B5EA8", route: "/admin-operators" },
+  { label: "Allocate Device", icon: "smartphone" as const, color: "#F97316", route: "/admin-devices" },
+  { label: "Monitor Attendance", icon: "monitor" as const, color: "#0D9488", route: "/admin-attendance" },
+  { label: "Security Center", icon: "security" as const, color: "#DC2626", route: "/admin-security" },
+  { label: "Generate Report", icon: "analytics" as const, color: "#16A34A", route: "/reports" },
 ];
 
 const RECENT_ACTIVITY = [
@@ -60,7 +60,7 @@ function PulsingDot({ color }: { color: string }) {
   return <Animated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, opacity: anim }]} />;
 }
 
-function AdminKpiCard({ label, value, icon, color, bg, badge }: { label: string; value: string | number; icon: keyof typeof Ionicons.glyphMap; color: string; bg: string; badge?: string }) {
+function AdminKpiCard({ label, value, icon, color, bg, badge }: { label: string; value: string | number; icon: keyof typeof MaterialIcons.glyphMap; color: string; bg: string; badge?: string }) {
   const colors = useColors();
   return (
     <View style={[akStyles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
@@ -70,7 +70,7 @@ function AdminKpiCard({ label, value, icon, color, bg, badge }: { label: string;
         </View>
       ) : null}
       <View style={[akStyles.iconWrap, { backgroundColor: bg }]}>
-        <Ionicons name={icon} size={20} color={color} />
+        <MaterialIcons name={icon} size={20} color={color} />
       </View>
       <Text style={[akStyles.value, { color: colors.foreground }]}>{value}</Text>
       <Text style={[akStyles.label, { color: colors.textSecondary }]}>{label}</Text>
@@ -143,8 +143,8 @@ export default function DashboardScreen() {
               )}
             </View>
             <View style={[styles.welcomeIcon, { backgroundColor: "rgba(255,255,255,0.15)" }]}>
-              <MaterialCommunityIcons
-                name={isAdmin ? "shield-crown" : "face-recognition"}
+              <MaterialIcons
+                name={isAdmin ? "security" : "face"}
                 size={40}
                 color="rgba(255,255,255,0.9)"
               />
@@ -157,23 +157,23 @@ export default function DashboardScreen() {
               {/* KPI Row 1 */}
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Infrastructure Overview</Text>
               <View style={styles.kpiRow}>
-                <AdminKpiCard label="Toll Plazas" value={kpis.totalPlazas} icon="business-outline" color={colors.accent} bg={colors.primary + "22"} badge={`${kpis.activePlazas} Active`} />
-                <AdminKpiCard label="Operators" value={kpis.totalOperators} icon="people-circle-outline" color="#3B82F6" bg="#3B82F622" badge={`${kpis.activeOperators} Active`} />
-                <AdminKpiCard label="Total Workers" value={kpis.totalWorkers} icon="person-outline" color={colors.success} bg={colors.successBg} />
+                <AdminKpiCard label="Toll Plazas" value={kpis.totalPlazas} icon="business" color={colors.accent} bg={colors.primary + "22"} badge={`${kpis.activePlazas} Active`} />
+                <AdminKpiCard label="Operators" value={kpis.totalOperators} icon="supervisor-account" color="#3B82F6" bg="#3B82F622" badge={`${kpis.activeOperators} Active`} />
+                <AdminKpiCard label="Total Workers" value={kpis.totalWorkers} icon="people" color={colors.success} bg={colors.successBg} />
               </View>
 
               {/* KPI Row 2 */}
               <View style={styles.kpiRow}>
-                <AdminKpiCard label="Present Today" value={kpis.presentToday} icon="checkmark-circle-outline" color={colors.success} bg={colors.successBg} />
-                <AdminKpiCard label="Absent Today" value={kpis.absentToday} icon="close-circle-outline" color={colors.destructive} bg={colors.destructive + "22"} />
-                <AdminKpiCard label="Active Devices" value={kpis.activeDevices} icon="phone-portrait-outline" color={colors.warning} bg={colors.warningBg} />
+                <AdminKpiCard label="Present Today" value={kpis.presentToday} icon="check-circle" color={colors.success} bg={colors.successBg} />
+                <AdminKpiCard label="Absent Today" value={kpis.absentToday} icon="cancel" color={colors.destructive} bg={colors.destructive + "22"} />
+                <AdminKpiCard label="Active Devices" value={kpis.activeDevices} icon="smartphone" color={colors.warning} bg={colors.warningBg} />
               </View>
 
               {/* KPI Row 3 */}
               <View style={styles.kpiRow}>
-                <AdminKpiCard label="Unauth Attempts" value={kpis.unauthorizedAttempts} icon="shield-outline" color={colors.destructive} bg={colors.destructive + "22"} badge={kpis.unauthorizedAttempts > 0 ? "Alert" : undefined} />
-                <AdminKpiCard label="Pending Sync" value={kpis.pendingSync} icon="cloud-upload-outline" color={colors.warning} bg={colors.warningBg} />
-                <AdminKpiCard label="System Health" value="98%" icon="pulse-outline" color={colors.success} bg={colors.successBg} />
+                <AdminKpiCard label="Unauth Attempts" value={kpis.unauthorizedAttempts} icon="security" color={colors.destructive} bg={colors.destructive + "22"} badge={kpis.unauthorizedAttempts > 0 ? "Alert" : undefined} />
+                <AdminKpiCard label="Pending Sync" value={kpis.pendingSync} icon="cloud-upload" color={colors.warning} bg={colors.warningBg} />
+                <AdminKpiCard label="System Health" value="98%" icon="show-chart" color={colors.success} bg={colors.successBg} />
               </View>
 
               {/* Quick Actions */}
@@ -187,7 +187,7 @@ export default function DashboardScreen() {
                     activeOpacity={0.75}
                   >
                     <View style={[styles.quickActionIcon, { backgroundColor: a.color + "22" }]}>
-                      <Ionicons name={a.icon} size={22} color={a.color} />
+                      <MaterialIcons name={a.icon} size={22} color={a.color} />
                     </View>
                     <Text style={[styles.quickActionLabel, { color: colors.foreground }]}>{a.label}</Text>
                   </TouchableOpacity>
@@ -210,8 +210,8 @@ export default function DashboardScreen() {
                           <View style={[styles.alertIconWrap, {
                             backgroundColor: alert.severity === "high" ? colors.destructive + "22" : colors.warning + "22"
                           }]}>
-                            <Ionicons
-                              name={alert.severity === "high" ? "warning" : "alert-circle-outline"}
+                            <MaterialIcons
+                              name={alert.severity === "high" ? "warning" : "error"}
                               size={18}
                               color={alert.severity === "high" ? colors.destructive : colors.warning}
                             />
@@ -286,7 +286,7 @@ export default function DashboardScreen() {
                   <View key={op.id}>
                     <View style={styles.opRow}>
                       <View style={[styles.opAvatar, { backgroundColor: colors.primary + "22" }]}>
-                        <Ionicons name="person" size={18} color={colors.accent} />
+                        <MaterialIcons name="person" size={18} color={colors.accent} />
                       </View>
                       <View style={styles.opInfo}>
                         <Text style={[styles.opName, { color: colors.foreground }]}>{op.name}</Text>
@@ -309,15 +309,15 @@ export default function DashboardScreen() {
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>System Status</Text>
               <View style={[styles.listCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 {[
-                  { label: "Database", value: "Healthy", icon: "server-outline" as const, color: colors.success },
-                  { label: "Device Sync", value: "Active", icon: "sync-outline" as const, color: colors.accent },
-                  { label: "Security Monitor", value: "Running", icon: "shield-checkmark-outline" as const, color: colors.success },
-                  { label: "Offline Cache", value: `${kpis.pendingSync} pending`, icon: "cloud-offline-outline" as const, color: colors.warning },
+                  { label: "Database", value: "Healthy", icon: "storage" as const, color: colors.success },
+                  { label: "Device Sync", value: "Active", icon: "sync" as const, color: colors.accent },
+                  { label: "Security Monitor", value: "Running", icon: "verified-user" as const, color: colors.success },
+                  { label: "Offline Cache", value: `${kpis.pendingSync} pending`, icon: "cloud-off" as const, color: colors.warning },
                 ].map((row, i, arr) => (
                   <View key={i}>
                     <View style={styles.statusRow}>
                       <View style={[styles.statusIconWrap, { backgroundColor: row.color + "22" }]}>
-                        <Ionicons name={row.icon} size={18} color={row.color} />
+                        <MaterialIcons name={row.icon} size={18} color={row.color} />
                       </View>
                       <Text style={[styles.statusLabel, { color: colors.textSecondary }]}>{row.label}</Text>
                       <Text style={[styles.statusValue, { color: row.color }]}>{row.value}</Text>
@@ -333,12 +333,12 @@ export default function DashboardScreen() {
               {/* Stats */}
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Today's Statistics</Text>
               <View style={styles.statsRow}>
-                <StatCard label="Total Workers" value={stats.total} icon="people-outline" color={colors.accent} bg={colors.primary + "22"} />
-                <StatCard label="Present Today" value={stats.present} icon="checkmark-circle-outline" color={colors.success} bg={colors.successBg} subtitle="On time" />
+                <StatCard label="Total Workers" value={stats.total} icon="people" color={colors.accent} bg={colors.primary + "22"} />
+                <StatCard label="Present Today" value={stats.present} icon="check-circle" color={colors.success} bg={colors.successBg} subtitle="On time" />
               </View>
               <View style={styles.statsRow}>
-                <StatCard label="Absent Today" value={stats.absent} icon="close-circle-outline" color={colors.destructive} bg={colors.destructive + "22"} />
-                <StatCard label="Pending Sync" value={stats.pending} icon="cloud-upload-outline" color={colors.warning} bg={colors.warningBg} subtitle="Records" />
+                <StatCard label="Absent Today" value={stats.absent} icon="cancel" color={colors.destructive} bg={colors.destructive + "22"} />
+                <StatCard label="Pending Sync" value={stats.pending} icon="cloud-upload" color={colors.warning} bg={colors.warningBg} subtitle="Records" />
               </View>
 
               {/* Quick Actions */}
@@ -352,7 +352,7 @@ export default function DashboardScreen() {
                     activeOpacity={0.75}
                   >
                     <View style={[styles.actionIcon, { backgroundColor: a.color + "22" }]}>
-                      <Ionicons name={a.icon} size={26} color={a.color} />
+                      <MaterialIcons name={a.icon} size={26} color={a.color} />
                     </View>
                     <Text style={[styles.actionLabel, { color: colors.foreground }]}>{a.label}</Text>
                   </TouchableOpacity>
@@ -366,7 +366,7 @@ export default function DashboardScreen() {
                   <View key={i}>
                     <View style={styles.activityRow}>
                       <View style={[styles.activityAvatar, { backgroundColor: colors.primary + "22" }]}>
-                        <Ionicons name="person" size={18} color={colors.accent} />
+                        <MaterialIcons name="person" size={18} color={colors.accent} />
                       </View>
                       <View style={styles.activityInfo}>
                         <Text style={[styles.activityName, { color: colors.foreground }]}>{item.name}</Text>
@@ -390,15 +390,15 @@ export default function DashboardScreen() {
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>System Status</Text>
               <View style={[styles.listCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 {[
-                  { label: "Device Status", value: "Online & Active", icon: "phone-portrait-outline" as const, color: colors.success },
-                  { label: "Offline Mode", value: "Enabled", icon: "wifi-outline" as const, color: colors.accent },
-                  { label: "Pending Records", value: `${stats.pending} records`, icon: "time-outline" as const, color: colors.warning },
-                  { label: "Last Sync Time", value: "Not synced yet", icon: "sync-outline" as const, color: colors.textSecondary },
+                  { label: "Device Status", value: "Online & Active", icon: "smartphone" as const, color: colors.success },
+                  { label: "Offline Mode", value: "Enabled", icon: "wifi" as const, color: colors.accent },
+                  { label: "Pending Records", value: `${stats.pending} records`, icon: "access-time" as const, color: colors.warning },
+                  { label: "Last Sync Time", value: "Not synced yet", icon: "sync" as const, color: colors.textSecondary },
                 ].map((row, i, arr) => (
                   <View key={i}>
                     <View style={styles.statusRow}>
                       <View style={[styles.statusIconWrap, { backgroundColor: row.color + "22" }]}>
-                        <Ionicons name={row.icon} size={18} color={row.color} />
+                        <MaterialIcons name={row.icon} size={18} color={row.color} />
                       </View>
                       <Text style={[styles.statusLabel, { color: colors.textSecondary }]}>{row.label}</Text>
                       <Text style={[styles.statusValue, { color: row.color }]}>{row.value}</Text>

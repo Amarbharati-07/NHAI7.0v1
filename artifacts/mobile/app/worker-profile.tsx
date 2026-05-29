@@ -1,7 +1,7 @@
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -32,21 +32,21 @@ import {
 
 const TOTAL_POSES = 8;
 
-const STATUS_COLORS: Record<WorkerStatus, { bg: string; text: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  active: { bg: "#D1FAE5", text: "#059669", icon: "checkmark-circle" },
-  inactive: { bg: "#FEE2E2", text: "#DC2626", icon: "close-circle" },
-  transferred: { bg: "#FEF3C7", text: "#D97706", icon: "arrow-forward-circle" },
+const STATUS_META: Record<WorkerStatus, { bg: string; text: string; icon: keyof typeof MaterialIcons.glyphMap }> = {
+  active: { bg: "#D1FAE5", text: "#059669", icon: "check-circle" },
+  inactive: { bg: "#FEE2E2", text: "#DC2626", icon: "cancel" },
+  transferred: { bg: "#FEF3C7", text: "#D97706", icon: "arrow-forward" },
 };
 
 function InfoRow({ icon, label, value, colors }: {
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof MaterialIcons.glyphMap;
   label: string;
   value: string;
   colors: ReturnType<typeof useColors>;
 }) {
   return (
     <View style={ir.row}>
-      <Ionicons name={icon} size={15} color={colors.textMuted} />
+      <MaterialIcons name={icon} size={16} color={colors.textMuted} />
       <Text style={[ir.label, { color: colors.textSecondary }]}>{label}</Text>
       <Text style={[ir.value, { color: colors.foreground }]} numberOfLines={2}>{value}</Text>
     </View>
@@ -139,7 +139,7 @@ export default function WorkerProfileScreen() {
         <View style={[s.root, { backgroundColor: colors.background }]}>
           <AppHeader title="Worker Profile" showBack onBack={() => router.back()} />
           <View style={s.center}>
-            <Ionicons name="person-outline" size={48} color={colors.textMuted} />
+            <MaterialIcons name="person-off" size={48} color={colors.textMuted} />
             <Text style={[s.emptyText, { color: colors.textMuted }]}>Worker not found</Text>
           </View>
         </View>
@@ -148,7 +148,7 @@ export default function WorkerProfileScreen() {
   }
 
   const status = (worker.status ?? "active") as WorkerStatus;
-  const sc = STATUS_COLORS[status];
+  const sm = STATUS_META[status];
   const faceEnrolled = faceCount >= TOTAL_POSES;
   const facePercent = Math.min(100, Math.round((faceCount / TOTAL_POSES) * 100));
 
@@ -160,30 +160,30 @@ export default function WorkerProfileScreen() {
           contentContainerStyle={[s.content, { paddingBottom: bottomPad }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* ── Hero Card ── */}
+          {/* ── Hero ── */}
           <View style={[s.hero, { backgroundColor: colors.primary, borderRadius: colors.radius }]}>
             <View style={[s.heroAvatar, { backgroundColor: "rgba(255,255,255,0.15)" }]}>
-              <Ionicons name="person" size={42} color="rgba(255,255,255,0.85)" />
+              <MaterialIcons name="person" size={44} color="rgba(255,255,255,0.85)" />
             </View>
             <Text style={s.heroName}>{worker.fullName}</Text>
             <Text style={s.heroId}>{worker.workerId}</Text>
-            <Text style={s.heroEmpType}>{worker.employeeType} • {worker.department}</Text>
-            <View style={[s.statusPill, { backgroundColor: sc.bg }]}>
-              <Ionicons name={sc.icon} size={13} color={sc.text} />
-              <Text style={[s.statusPillText, { color: sc.text }]}>
+            <Text style={s.heroSub}>{worker.employeeType} • {worker.department}</Text>
+            <View style={[s.statusPill, { backgroundColor: sm.bg }]}>
+              <MaterialIcons name={sm.icon} size={13} color={sm.text} />
+              <Text style={[s.statusPillText, { color: sm.text }]}>
                 {status.charAt(0).toUpperCase() + status.slice(1)}
               </Text>
             </View>
           </View>
 
-          {/* ── Quick Action Buttons ── */}
+          {/* ── Quick Actions ── */}
           <View style={s.quickActions}>
             <TouchableOpacity
               style={[s.qBtn, { backgroundColor: colors.card, borderColor: "#3B82F644" }]}
               onPress={() => router.push({ pathname: "/edit-worker", params: { id: String(worker.id) } } as never)}
               activeOpacity={0.8}
             >
-              <Ionicons name="create-outline" size={20} color="#3B82F6" />
+              <MaterialIcons name="edit" size={20} color="#3B82F6" />
               <Text style={[s.qBtnLabel, { color: "#3B82F6" }]}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -191,7 +191,7 @@ export default function WorkerProfileScreen() {
               onPress={() => router.push({ pathname: "/guided-face-capture", params: { sessionId: `reenroll_${worker.id}_${Date.now()}` } } as never)}
               activeOpacity={0.8}
             >
-              <Ionicons name="scan-outline" size={20} color="#8B5CF6" />
+              <MaterialIcons name="face" size={20} color="#8B5CF6" />
               <Text style={[s.qBtnLabel, { color: "#8B5CF6" }]}>Re-enroll</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -199,40 +199,40 @@ export default function WorkerProfileScreen() {
               onPress={() => router.push({ pathname: "/attendance-history" } as never)}
               activeOpacity={0.8}
             >
-              <Ionicons name="calendar-outline" size={20} color="#0D9488" />
+              <MaterialIcons name="history" size={20} color="#0D9488" />
               <Text style={[s.qBtnLabel, { color: "#0D9488" }]}>History</Text>
             </TouchableOpacity>
           </View>
 
-          {/* ── Attendance Stats ── */}
-          <View style={[s.statsStrip]}>
+          {/* ── Attendance Stats Strip ── */}
+          <View style={s.statsStrip}>
             {[
               { label: "Present", value: attStats.present, color: colors.success, bg: colors.successBg },
               { label: "Absent", value: attStats.absent, color: colors.destructive, bg: colors.destructive + "22" },
               { label: "Total Days", value: attStats.total, color: colors.accent, bg: colors.primary + "22" },
               { label: "Rate", value: `${attStats.rate}%`, color: "#8B5CF6", bg: "#8B5CF622" },
-            ].map((s2, i) => (
-              <View key={i} style={[s.stripCard, { backgroundColor: s2.bg, borderRadius: colors.radius }]}>
-                <Text style={[s.stripVal, { color: s2.color }]}>{s2.value}</Text>
-                <Text style={[s.stripLabel, { color: colors.textSecondary }]}>{s2.label}</Text>
+            ].map((item, i) => (
+              <View key={i} style={[s.stripCard, { backgroundColor: item.bg, borderRadius: colors.radius }]}>
+                <Text style={[s.stripVal, { color: item.color }]}>{item.value}</Text>
+                <Text style={[s.stripLabel, { color: colors.textSecondary }]}>{item.label}</Text>
               </View>
             ))}
           </View>
 
-          {/* ── Worker Information ── */}
+          {/* ── Worker Info ── */}
           <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={s.sectionHead}>
-              <Ionicons name="person-outline" size={16} color={colors.accent} />
+              <MaterialIcons name="person" size={16} color={colors.accent} />
               <Text style={[s.sectionTitle, { color: colors.foreground }]}>Worker Information</Text>
             </View>
             {[
-              { icon: "call-outline" as const, label: "Mobile", value: worker.mobile || "—" },
-              { icon: "briefcase-outline" as const, label: "Department", value: worker.department },
-              { icon: "business-outline" as const, label: "Contractor", value: worker.contractorName || "—" },
-              { icon: "location-outline" as const, label: "Site Location", value: worker.siteLocation || "—" },
-              { icon: "id-card-outline" as const, label: "Employee Type", value: worker.employeeType },
-              { icon: "key-outline" as const, label: "Plaza ID", value: worker.plazaId || "—" },
-              { icon: "calendar-outline" as const, label: "Registered", value: worker.createdAt?.split("T")[0] ?? "—" },
+              { icon: "call" as const, label: "Mobile", value: worker.mobile || "—" },
+              { icon: "work" as const, label: "Department", value: worker.department },
+              { icon: "business" as const, label: "Contractor", value: worker.contractorName || "—" },
+              { icon: "location-on" as const, label: "Site Location", value: worker.siteLocation || "—" },
+              { icon: "badge" as const, label: "Employee Type", value: worker.employeeType },
+              { icon: "key" as const, label: "Plaza ID", value: worker.plazaId || "—" },
+              { icon: "calendar-month" as const, label: "Registered", value: worker.createdAt?.split("T")[0] ?? "—" },
             ].map((row, i, arr) => (
               <View key={i}>
                 <InfoRow icon={row.icon} label={row.label} value={row.value} colors={colors} />
@@ -241,17 +241,13 @@ export default function WorkerProfileScreen() {
             ))}
           </View>
 
-          {/* ── Face Enrollment Status ── */}
+          {/* ── Face Enrollment ── */}
           <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={s.sectionHead}>
-              <Ionicons name="scan-outline" size={16} color={colors.accent} />
+              <MaterialIcons name="face" size={16} color={colors.accent} />
               <Text style={[s.sectionTitle, { color: colors.foreground }]}>Face Enrollment</Text>
               <View style={[s.enrollBadge, { backgroundColor: faceEnrolled ? colors.successBg : colors.warningBg }]}>
-                <Ionicons
-                  name={faceEnrolled ? "checkmark-circle" : "alert-circle"}
-                  size={12}
-                  color={faceEnrolled ? colors.success : colors.warning}
-                />
+                <MaterialIcons name={faceEnrolled ? "check-circle" : "error"} size={12} color={faceEnrolled ? colors.success : colors.warning} />
                 <Text style={[s.enrollBadgeText, { color: faceEnrolled ? colors.success : colors.warning }]}>
                   {faceEnrolled ? "Complete" : "Incomplete"}
                 </Text>
@@ -275,7 +271,7 @@ export default function WorkerProfileScreen() {
                 onPress={() => router.push({ pathname: "/guided-face-capture", params: { sessionId: `reenroll_${worker.id}_${Date.now()}` } } as never)}
                 activeOpacity={0.8}
               >
-                <Ionicons name="scan-outline" size={16} color="#8B5CF6" />
+                <MaterialIcons name="face" size={16} color="#8B5CF6" />
                 <Text style={[s.reenrollBtnText, { color: "#8B5CF6" }]}>Complete Face Re-enrollment</Text>
               </TouchableOpacity>
             )}
@@ -284,7 +280,7 @@ export default function WorkerProfileScreen() {
           {/* ── Status Management ── */}
           <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={s.sectionHead}>
-              <Ionicons name="shield-outline" size={16} color={colors.accent} />
+              <MaterialIcons name="security" size={16} color={colors.accent} />
               <Text style={[s.sectionTitle, { color: colors.foreground }]}>Status Management</Text>
             </View>
             <Text style={[s.statusNote, { color: colors.textSecondary }]}>
@@ -297,7 +293,7 @@ export default function WorkerProfileScreen() {
                   onPress={() => handleStatusChange("active")}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="person-add-outline" size={16} color={colors.success} />
+                  <MaterialIcons name="person-add" size={16} color={colors.success} />
                   <Text style={[s.statusActionText, { color: colors.success }]}>Reactivate</Text>
                 </TouchableOpacity>
               )}
@@ -307,7 +303,7 @@ export default function WorkerProfileScreen() {
                   onPress={() => handleStatusChange("transferred")}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="arrow-forward-circle-outline" size={16} color="#D97706" />
+                  <MaterialIcons name="arrow-forward" size={16} color="#D97706" />
                   <Text style={[s.statusActionText, { color: "#D97706" }]}>Mark Transferred</Text>
                 </TouchableOpacity>
               )}
@@ -317,7 +313,7 @@ export default function WorkerProfileScreen() {
                   onPress={() => handleStatusChange("inactive")}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="person-remove-outline" size={16} color={colors.destructive} />
+                  <MaterialIcons name="person-remove" size={16} color={colors.destructive} />
                   <Text style={[s.statusActionText, { color: colors.destructive }]}>Deactivate Worker</Text>
                 </TouchableOpacity>
               )}
@@ -327,7 +323,7 @@ export default function WorkerProfileScreen() {
           {/* ── Recent Attendance ── */}
           <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
             <View style={s.sectionHead}>
-              <Ionicons name="calendar-outline" size={16} color={colors.accent} />
+              <MaterialIcons name="calendar-month" size={16} color={colors.accent} />
               <Text style={[s.sectionTitle, { color: colors.foreground }]}>Recent Attendance</Text>
               <Text style={[s.sectionCount, { color: colors.textMuted }]}>{attendance.length} records</Text>
             </View>
@@ -363,7 +359,7 @@ export default function WorkerProfileScreen() {
           {auditLogs.length > 0 && (
             <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
               <View style={s.sectionHead}>
-                <Ionicons name="time-outline" size={16} color={colors.accent} />
+                <MaterialIcons name="history" size={16} color={colors.accent} />
                 <Text style={[s.sectionTitle, { color: colors.foreground }]}>Audit Log</Text>
                 <Text style={[s.sectionCount, { color: colors.textMuted }]}>{auditLogs.length} entries</Text>
               </View>
@@ -410,7 +406,7 @@ const s = StyleSheet.create({
   heroAvatar: { width: 84, height: 84, borderRadius: 42, alignItems: "center", justifyContent: "center", marginBottom: 4 },
   heroName: { color: "#fff", fontSize: 22, fontWeight: "800" },
   heroId: { color: "rgba(255,255,255,0.7)", fontSize: 13 },
-  heroEmpType: { color: "rgba(255,255,255,0.6)", fontSize: 12 },
+  heroSub: { color: "rgba(255,255,255,0.6)", fontSize: 12 },
   statusPill: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 99, marginTop: 4 },
   statusPillText: { fontSize: 12, fontWeight: "700" },
 

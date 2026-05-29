@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { getAllWorkers, getAttendanceStats, Worker } from "@/services/database";
+import { getWorkers, getAttendanceStats, Worker } from "@/services/database";
 import { MOCK_TOLL_PLAZAS } from "@/services/adminData";
 import { useColors } from "@/hooks/useColors";
 
@@ -86,7 +86,7 @@ export default function AdminWorkersScreen() {
   const [transferTo, setTransferTo] = useState("");
 
   const load = useCallback(async () => {
-    const [ws, s] = await Promise.all([getAllWorkers(), getAttendanceStats()]);
+    const [ws, s] = await Promise.all([getWorkers(), getAttendanceStats()]);
     setWorkers(ws);
     setStats({ total: s.total, present: s.present, absent: s.absent });
   }, []);

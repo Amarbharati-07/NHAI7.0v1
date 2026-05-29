@@ -1,0 +1,2 @@
+- [MaterialIcons naming convention](material-icons-naming.md) — @expo/vector-icons MaterialIcons uses HYPHENS not underscores (e.g. `check-circle`, not `check_circle`)
+- [SpectraID icon standard](spectra-icon-standard.md) — All components must use MaterialIcons; Ionicons font still preloaded in _layout for legacy screens

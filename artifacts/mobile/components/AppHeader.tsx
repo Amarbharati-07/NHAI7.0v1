@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React from "react";
 import {
@@ -37,7 +37,7 @@ export default function AppHeader({ title, showBack = false, onBack }: AppHeader
           }}
           activeOpacity={0.7}
         >
-          <Ionicons name={showBack ? "arrow-back" : "menu"} size={22} color={colors.accent} />
+          <MaterialIcons name={showBack ? "arrow-back" : "menu"} size={22} color={colors.accent} />
         </TouchableOpacity>
 
         <View style={styles.titleArea}>
@@ -50,7 +50,7 @@ export default function AppHeader({ title, showBack = false, onBack }: AppHeader
             style={[styles.iconBtn, { backgroundColor: colors.primary + "22" }]}
             activeOpacity={0.7}
           >
-            <Ionicons name="notifications-outline" size={20} color={colors.accent} />
+            <MaterialIcons name="notifications" size={20} color={colors.accent} />
             <View style={[styles.badge, { backgroundColor: colors.warning }]}>
               <Text style={styles.badgeText}>2</Text>
             </View>
@@ -59,7 +59,7 @@ export default function AppHeader({ title, showBack = false, onBack }: AppHeader
             style={[styles.iconBtn, { backgroundColor: colors.primary + "22" }]}
             activeOpacity={0.7}
           >
-            <Ionicons name="person-circle-outline" size={22} color={colors.accent} />
+            <MaterialIcons name="account-circle" size={22} color={colors.accent} />
           </TouchableOpacity>
         </View>
       </View>

@@ -337,14 +337,15 @@ export async function updateWorker(
     fullName: "fullName", mobile: "mobile", department: "department",
     contractorName: "contractorName", employeeType: "employeeType", siteLocation: "siteLocation",
   };
+  const originalRecord = original as unknown as Record<string, unknown>;
   for (const [key, col] of Object.entries(fieldMap)) {
     const k = key as keyof typeof fields;
-    if (fields[k] !== undefined && fields[k] !== (original as Record<string, unknown>)[key]) {
+    if (fields[k] !== undefined && fields[k] !== originalRecord[key]) {
       updates.push(`${col} = ?`);
       values.push(fields[k] as string);
       await addAuditLog({
         workerId: id, action: "update_field", fieldChanged: key,
-        oldValue: String((original as Record<string, unknown>)[key] ?? ""),
+        oldValue: String(originalRecord[key] ?? ""),
         newValue: String(fields[k]),
         changedBy,
       });
