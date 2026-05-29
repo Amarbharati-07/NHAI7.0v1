@@ -416,6 +416,59 @@ export async function getAttendanceStats(): Promise<{ total: number; present: nu
   return { total, present, absent, pending };
 }
 
+export async function clearAllAppData(): Promise<{ workers: number; attendance: number; syncQueue: number }> {
+  const db = await getDb();
+  const wCount = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM workers");
+  const aCount = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM attendance");
+  const sCount = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM sync_queue");
+  await db.execAsync(`
+    DELETE FROM face_images;
+    DELETE FROM audit_log;
+    DELETE FROM attendance;
+    DELETE FROM sync_queue;
+    DELETE FROM workers;
+  `);
+  return { workers: wCount?.c ?? 0, attendance: aCount?.c ?? 0, syncQueue: sCount?.c ?? 0 };
+}
+
+export async function clearSyncedRecords(): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) as c FROM sync_queue WHERE status = 'synced'"
+  );
+  const count = row?.c ?? 0;
+  await db.execAsync("DELETE FROM sync_queue WHERE status = 'synced'");
+  await db.execAsync("DELETE FROM face_images WHERE captured = 0");
+  return count;
+}
+
+export async function getSyncStats(): Promise<{ pending: number; synced: number; failed: number; lastSync: string | null }> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ status: string; cnt: number }>(
+    "SELECT status, COUNT(*) as cnt FROM sync_queue GROUP BY status"
+  );
+  let pending = 0; let synced = 0; let failed = 0;
+  for (const r of rows) {
+    if (r.status === "pending") pending = r.cnt;
+    else if (r.status === "synced") synced = r.cnt;
+    else if (r.status === "failed") failed = r.cnt;
+  }
+  const lastRow = await db.getFirstAsync<{ createdAt: string }>(
+    "SELECT createdAt FROM sync_queue WHERE status = 'synced' ORDER BY createdAt DESC LIMIT 1"
+  );
+  return { pending, synced, failed, lastSync: lastRow?.createdAt ?? null };
+}
+
+export async function getAttendanceForCSV(): Promise<AttendanceRecord[]> {
+  const db = await getDb();
+  return db.getAllAsync<AttendanceRecord>(
+    `SELECT a.*, w.fullName as workerName, w.workerId as workerIdCode, w.department, w.contractorName
+     FROM attendance a
+     LEFT JOIN workers w ON a.workerId = w.id
+     ORDER BY a.date DESC, a.time DESC`
+  );
+}
+
 export async function getWeeklyAttendance(): Promise<{ day: string; count: number }[]> {
   const db = await getDb();
   const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

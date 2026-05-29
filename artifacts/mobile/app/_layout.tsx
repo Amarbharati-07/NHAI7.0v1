@@ -22,6 +22,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { DrawerProvider } from "@/contexts/DrawerContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -49,13 +50,14 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ErrorBoundary>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>
-            <DrawerProvider>
-              <GestureHandlerRootView style={{ flex: 1 }}>
-                <KeyboardProvider>
-                  <Stack screenOptions={{ headerShown: false }}>
+      <ThemeProvider>
+        <ErrorBoundary>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <DrawerProvider>
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <KeyboardProvider>
+                    <Stack screenOptions={{ headerShown: false }}>
                     <Stack.Screen name="index" options={{ animation: "none" }} />
                     <Stack.Screen name="(tabs)" />
                     <Stack.Screen name="login" />
@@ -83,13 +85,14 @@ export default function RootLayout() {
                     <Stack.Screen name="admin-workers" />
                     <Stack.Screen name="admin-security" />
                     <Stack.Screen name="admin-attendance" />
-                  </Stack>
-                </KeyboardProvider>
-              </GestureHandlerRootView>
-            </DrawerProvider>
-          </AuthProvider>
-        </QueryClientProvider>
-      </ErrorBoundary>
+                    </Stack>
+                  </KeyboardProvider>
+                </GestureHandlerRootView>
+              </DrawerProvider>
+            </AuthProvider>
+          </QueryClientProvider>
+        </ErrorBoundary>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
