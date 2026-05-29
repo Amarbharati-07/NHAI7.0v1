@@ -268,7 +268,7 @@ export async function getAttendanceHistory(): Promise<AttendanceRecord[]> {
 
 export async function getSyncQueue(): Promise<SyncRecord[]> {
   const db = await getDb();
-  return db.getAllAsync<SyncRecord>("SELECT * FROM sync_queue WHERE status = 'pending' ORDER BY createdAt ASC");
+  return db.getAllAsync<SyncRecord>("SELECT * FROM sync_queue ORDER BY createdAt DESC");
 }
 
 export async function markSynced(recordId: number): Promise<void> {
@@ -414,4 +414,22 @@ export async function getAttendanceStats(): Promise<{ total: number; present: nu
   }
   const total = present + absent;
   return { total, present, absent, pending };
+}
+
+export async function getWeeklyAttendance(): Promise<{ day: string; count: number }[]> {
+  const db = await getDb();
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const result: { day: string; count: number }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split("T")[0];
+    const dayName = DAY_NAMES[d.getDay()];
+    const row = await db.getFirstAsync<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM attendance WHERE date = ? AND status = 'present'",
+      [dateStr]
+    );
+    result.push({ day: dayName, count: row?.cnt ?? 0 });
+  }
+  return result;
 }
