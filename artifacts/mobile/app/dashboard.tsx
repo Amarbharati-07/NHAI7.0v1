@@ -18,7 +18,8 @@ import DrawerOverlay from "@/components/DrawerOverlay";
 import StatCard from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAttendanceStats } from "@/services/database";
-import { getAdminKpis, MOCK_SECURITY_EVENTS, MOCK_PLAZA_ATTENDANCE, MOCK_OPERATORS } from "@/services/adminData";
+import { MOCK_SECURITY_EVENTS } from "@/services/adminData";
+import { useAdminData } from "@/contexts/AdminDataContext";
 import { useColors } from "@/hooks/useColors";
 
 interface Stats { total: number; present: number; absent: number; pending: number }
@@ -94,9 +95,9 @@ export default function DashboardScreen() {
   const [stats, setStats] = useState<Stats>({ total: 0, present: 0, absent: 0, pending: 0 });
   const [refreshing, setRefreshing] = useState(false);
   const isAdmin = user?.role === "admin";
-  const kpis = getAdminKpis();
+  const { kpis, plazas, operators, refresh: refreshAdminData } = useAdminData();
   const unresolvedAlerts = MOCK_SECURITY_EVENTS.filter((e) => !e.resolved);
-  const activeOps = MOCK_OPERATORS.filter((o) => o.status === "active");
+  const activeOps = operators.filter((o) => o.status === "active");
 
   const loadStats = useCallback(async () => {
     const s = await getAttendanceStats();
@@ -107,9 +108,9 @@ export default function DashboardScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadStats();
+    await Promise.all([loadStats(), refreshAdminData()]);
     setRefreshing(false);
-  }, [loadStats]);
+  }, [loadStats, refreshAdminData]);
 
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -247,19 +248,23 @@ export default function DashboardScreen() {
                 </TouchableOpacity>
               </View>
               <View style={[styles.listCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
-                {MOCK_PLAZA_ATTENDANCE.map((plaza, i) => (
-                  <View key={plaza.plazaId}>
+                {plazas.length === 0 ? (
+                  <View style={{ padding: 16, alignItems: "center" }}>
+                    <Text style={{ color: colors.textMuted, fontSize: 13 }}>No plazas registered yet</Text>
+                  </View>
+                ) : plazas.map((plaza, i) => (
+                  <View key={plaza.id}>
                     <View style={styles.plazaRow}>
                       <View style={styles.plazaInfo}>
                         <View style={styles.plazaNameRow}>
                           <View style={[styles.plazaDot, { backgroundColor: plaza.attendancePct >= 90 ? colors.success : plaza.attendancePct >= 80 ? colors.warning : colors.destructive }]} />
-                          <Text style={[styles.plazaName, { color: colors.foreground }]}>{plaza.plazaName}</Text>
+                          <Text style={[styles.plazaName, { color: colors.foreground }]}>{plaza.name}</Text>
                         </View>
-                        <Text style={[styles.plazaSub, { color: colors.textMuted }]}>{plaza.route} • {plaza.present}/{plaza.totalWorkers} present</Text>
+                        <Text style={[styles.plazaSub, { color: colors.textMuted }]}>{plaza.route} • {plaza.attendanceToday}/{plaza.workerCount} present</Text>
                       </View>
                       <View style={styles.plazaPctWrap}>
                         <Text style={[styles.plazaPct, { color: plaza.attendancePct >= 90 ? colors.success : plaza.attendancePct >= 80 ? colors.warning : colors.destructive }]}>
-                          {plaza.attendancePct}%
+                          {plaza.workerCount > 0 ? `${plaza.attendancePct}%` : "—"}
                         </Text>
                         <View style={[styles.miniBarBg, { backgroundColor: colors.surface }]}>
                           <View style={[styles.miniBarFill, {
@@ -269,7 +274,7 @@ export default function DashboardScreen() {
                         </View>
                       </View>
                     </View>
-                    {i < MOCK_PLAZA_ATTENDANCE.length - 1 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
+                    {i < plazas.length - 1 && <View style={[styles.divider, { backgroundColor: colors.border }]} />}
                   </View>
                 ))}
               </View>

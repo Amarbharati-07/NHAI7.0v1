@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { MOCK_PLAZA_ATTENDANCE, MOCK_TOLL_PLAZAS } from "@/services/adminData";
+import { useAdminData } from "@/contexts/AdminDataContext";
 import { getWeeklyAttendance } from "@/services/database";
 import { useColors } from "@/hooks/useColors";
 
@@ -43,6 +43,8 @@ export default function AdminAttendanceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [weeklyData, setWeeklyData] = useState<{ day: string; count: number }[]>([]);
 
+  const { plazas, refresh: refreshAdminData } = useAdminData();
+
   const loadWeekly = useCallback(async () => {
     const data = await getWeeklyAttendance();
     setWeeklyData(data);
@@ -52,15 +54,25 @@ export default function AdminAttendanceScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadWeekly();
+    await Promise.all([loadWeekly(), refreshAdminData()]);
     setRefreshing(false);
-  }, [loadWeekly]);
-
-  const totalWorkers = MOCK_PLAZA_ATTENDANCE.reduce((s, p) => s + p.totalWorkers, 0);
-  const totalPresent = MOCK_PLAZA_ATTENDANCE.reduce((s, p) => s + p.present, 0);
-  const totalAbsent = MOCK_PLAZA_ATTENDANCE.reduce((s, p) => s + p.absent, 0);
-  const totalLate = MOCK_PLAZA_ATTENDANCE.reduce((s, p) => s + p.late, 0);
-  const overallPct = totalWorkers > 0 ? Math.round((totalPresent / totalWorkers) * 100) : 0;
+  }, [loadWeekly, refreshAdminData]);
+  const plazaAttendance = plazas.map((p) => ({
+    plazaId:       p.id,
+    plazaName:     p.name,
+    route:         p.route,
+    totalWorkers:  p.workerCount,
+    present:       p.attendanceToday,
+    absent:        Math.max(0, p.workerCount - p.attendanceToday),
+    late:          0,
+    attendancePct: p.attendancePct,
+    lastUpdate:    p.lastSync,
+  }));
+  const totalWorkers = plazaAttendance.reduce((s, p) => s + p.totalWorkers, 0);
+  const totalPresent = plazaAttendance.reduce((s, p) => s + p.present, 0);
+  const totalAbsent  = plazaAttendance.reduce((s, p) => s + p.absent, 0);
+  const totalLate    = plazaAttendance.reduce((s, p) => s + p.late, 0);
+  const overallPct   = totalWorkers > 0 ? Math.round((totalPresent / totalWorkers) * 100) : 0;
 
   const maxWeekly = Math.max(...weeklyData.map((d) => d.count), 1);
   const CHART_H = 110;
@@ -132,7 +144,7 @@ export default function AdminAttendanceScreen() {
                 <Text style={[styles.liveTime, { color: colors.textMuted }]}>Updated just now</Text>
               </View>
 
-              {MOCK_PLAZA_ATTENDANCE.map((plaza) => (
+              {plazaAttendance.map((plaza) => (
                 <View key={plaza.plazaId} style={[styles.plazaCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                   <View style={styles.plazaHeader}>
                     <View style={[styles.plazaIconWrap, { backgroundColor: colors.primary + "22" }]}>
@@ -205,7 +217,7 @@ export default function AdminAttendanceScreen() {
               {/* Plaza Comparison */}
               <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 <Text style={[styles.chartTitle, { color: colors.foreground }]}>Plaza-wise Comparison</Text>
-                {MOCK_PLAZA_ATTENDANCE.map((p, i) => (
+                {plazaAttendance.map((p, i) => (
                   <View key={i} style={styles.compareRow}>
                     <Text style={[styles.compareName, { color: colors.textSecondary }]} numberOfLines={1}>{p.plazaName}</Text>
                     <View style={[styles.compareBarBg, { backgroundColor: colors.surface }]}>

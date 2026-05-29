@@ -3,6 +3,9 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -10,20 +13,19 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  Modal,
-  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { MOCK_TOLL_PLAZAS, TollPlaza } from "@/services/adminData";
+import { useAdminData } from "@/contexts/AdminDataContext";
+import type { TollPlaza } from "@/services/adminData";
 import { useColors } from "@/hooks/useColors";
 
 type FilterType = "all" | "active" | "inactive" | "maintenance";
 
 const STATUS_META: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  active: { label: "Active", color: "#10B981", icon: "checkmark-circle-outline" },
-  inactive: { label: "Inactive", color: "#64748B", icon: "pause-circle-outline" },
+  active:      { label: "Active",      color: "#10B981", icon: "checkmark-circle-outline" },
+  inactive:    { label: "Inactive",    color: "#64748B", icon: "pause-circle-outline" },
   maintenance: { label: "Maintenance", color: "#F59E0B", icon: "construct-outline" },
 };
 
@@ -32,7 +34,6 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
   const meta = STATUS_META[plaza.status];
   return (
     <View style={[styles.plazaCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
-      {/* Header */}
       <View style={styles.cardHeader}>
         <View style={[styles.plazaIconWrap, { backgroundColor: colors.primary + "22" }]}>
           <MaterialCommunityIcons name="road-variant" size={22} color={colors.accent} />
@@ -47,7 +48,6 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
         </View>
       </View>
 
-      {/* Stats Row */}
       <View style={[styles.statsRow, { borderTopColor: colors.border }]}>
         <View style={styles.statItem}>
           <Text style={[styles.statVal, { color: colors.foreground }]}>{plaza.workerCount}</Text>
@@ -72,7 +72,6 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
         </View>
       </View>
 
-      {/* Operator Row */}
       <View style={[styles.operatorRow, { borderTopColor: colors.border }]}>
         <View style={[styles.operatorAvatar, { backgroundColor: plaza.operatorId ? colors.primary + "22" : colors.muted }]}>
           <Ionicons name="person" size={14} color={plaza.operatorId ? colors.accent : colors.textMuted} />
@@ -82,7 +81,6 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
         </Text>
       </View>
 
-      {/* Action Buttons */}
       <View style={[styles.actionsRow, { borderTopColor: colors.border }]}>
         <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.primary + "18" }]} onPress={() => onAction("edit", plaza)}>
           <Ionicons name="create-outline" size={15} color={colors.accent} />
@@ -111,27 +109,26 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
 export default function AdminTollPlazasScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const [filter, setFilter] = useState<FilterType>("all");
-  const [search, setSearch] = useState("");
-  const [plazas, setPlazas] = useState<TollPlaza[]>(MOCK_TOLL_PLAZAS);
+  const { plazas, addPlaza, updatePlaza, loading } = useAdminData();
 
-  // Add Plaza modal
+  const [filter, setFilter]   = useState<FilterType>("all");
+  const [search, setSearch]   = useState("");
+  const [saving, setSaving]   = useState(false);
+
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newRoute, setNewRoute] = useState("");
-  const [newLocation, setNewLocation] = useState("");
+  const [newName, setNewName]           = useState("");
+  const [newRoute, setNewRoute]         = useState("");
+  const [newLocation, setNewLocation]   = useState("");
 
-  // Edit modal
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editPlaza, setEditPlaza] = useState<TollPlaza | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editRoute, setEditRoute] = useState("");
-  const [editLocation, setEditLocation] = useState("");
-  const [editOperatorName, setEditOperatorName] = useState("");
+  const [showEditModal, setShowEditModal]           = useState(false);
+  const [editPlaza, setEditPlaza]                   = useState<TollPlaza | null>(null);
+  const [editName, setEditName]                     = useState("");
+  const [editRoute, setEditRoute]                   = useState("");
+  const [editLocation, setEditLocation]             = useState("");
+  const [editOperatorName, setEditOperatorName]     = useState("");
 
-  // Monitor modal
   const [showMonitorModal, setShowMonitorModal] = useState(false);
-  const [monitorPlaza, setMonitorPlaza] = useState<TollPlaza | null>(null);
+  const [monitorPlaza, setMonitorPlaza]         = useState<TollPlaza | null>(null);
 
   const filtered = plazas.filter((p) => {
     const matchFilter = filter === "all" || p.status === filter;
@@ -142,9 +139,9 @@ export default function AdminTollPlazasScreen() {
   });
 
   const counts = {
-    all: plazas.length,
-    active: plazas.filter((p) => p.status === "active").length,
-    inactive: plazas.filter((p) => p.status === "inactive").length,
+    all:         plazas.length,
+    active:      plazas.filter((p) => p.status === "active").length,
+    inactive:    plazas.filter((p) => p.status === "inactive").length,
     maintenance: plazas.filter((p) => p.status === "maintenance").length,
   };
 
@@ -160,23 +157,21 @@ export default function AdminTollPlazasScreen() {
       setShowEditModal(true);
 
     } else if (action === "activate") {
-      Alert.alert(
-        "Activate Plaza",
-        `Activate "${plaza.name}"?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Activate",
-            style: "default",
-            onPress: () => {
-              setPlazas((prev) =>
-                prev.map((p) => p.id === plaza.id ? { ...p, status: "active" } : p)
-              );
+      Alert.alert("Activate Plaza", `Activate "${plaza.name}"?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Activate",
+          onPress: async () => {
+            try {
+              await updatePlaza(plaza.id, { status: "active" });
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            },
+            } catch (e) {
+              console.error("[admin-toll-plazas] activate error:", e);
+              Alert.alert("Error", "Failed to activate plaza. Please try again.");
+            }
           },
-        ]
-      );
+        },
+      ]);
 
     } else if (action === "deactivate") {
       Alert.alert(
@@ -187,11 +182,14 @@ export default function AdminTollPlazasScreen() {
           {
             text: "Deactivate",
             style: "destructive",
-            onPress: () => {
-              setPlazas((prev) =>
-                prev.map((p) => p.id === plaza.id ? { ...p, status: "inactive" } : p)
-              );
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            onPress: async () => {
+              try {
+                await updatePlaza(plaza.id, { status: "inactive" });
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+              } catch (e) {
+                console.error("[admin-toll-plazas] deactivate error:", e);
+                Alert.alert("Error", "Failed to deactivate plaza. Please try again.");
+              }
             },
           },
         ]
@@ -203,21 +201,46 @@ export default function AdminTollPlazasScreen() {
     }
   };
 
-  const handleSaveEdit = () => {
-    if (!editName.trim()) {
-      Alert.alert("Error", "Plaza name is required");
-      return;
+  const handleSaveEdit = async () => {
+    if (!editName.trim()) { Alert.alert("Error", "Plaza name is required"); return; }
+    if (!editPlaza) return;
+    setSaving(true);
+    try {
+      await updatePlaza(editPlaza.id, {
+        name:         editName.trim(),
+        route:        editRoute.trim() || editPlaza.route,
+        location:     editLocation.trim() || editPlaza.location,
+        operatorName: editOperatorName.trim() || editPlaza.operatorName,
+      });
+      console.log("[admin-toll-plazas] updatePlaza success:", editPlaza.id);
+      setShowEditModal(false);
+      setEditPlaza(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error("[admin-toll-plazas] updatePlaza error:", e);
+      Alert.alert("Error", "Failed to save changes. Please try again.");
     }
-    setPlazas((prev) =>
-      prev.map((p) =>
-        p.id === editPlaza?.id
-          ? { ...p, name: editName.trim(), route: editRoute.trim(), location: editLocation.trim(), operatorName: editOperatorName.trim() || p.operatorName }
-          : p
-      )
-    );
-    setShowEditModal(false);
-    setEditPlaza(null);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setSaving(false);
+  };
+
+  const handleRegisterPlaza = async () => {
+    if (!newName.trim()) { Alert.alert("Error", "Plaza name is required"); return; }
+    setSaving(true);
+    try {
+      const plaza = await addPlaza({
+        name:     newName.trim(),
+        route:    newRoute.trim(),
+        location: newLocation.trim(),
+      });
+      console.log("[admin-toll-plazas] addPlaza success:", plaza.id, plaza.name);
+      setNewName(""); setNewRoute(""); setNewLocation("");
+      setShowAddModal(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error("[admin-toll-plazas] addPlaza error:", e);
+      Alert.alert("Error", "Failed to register plaza. Please try again.");
+    }
+    setSaving(false);
   };
 
   const bottomPad = Platform.OS === "web" ? 24 : insets.bottom + 16;
@@ -226,6 +249,12 @@ export default function AdminTollPlazasScreen() {
     <DrawerOverlay>
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Toll Plaza Management" showBack onBack={() => router.back()} />
+
+        {loading && (
+          <View style={{ padding: 12, alignItems: "center" }}>
+            <ActivityIndicator size="small" color={colors.primary} />
+          </View>
+        )}
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}>
 
@@ -275,7 +304,7 @@ export default function AdminTollPlazasScreen() {
             <PlazaCard key={plaza.id} plaza={plaza} onAction={handleAction} />
           ))}
 
-          {filtered.length === 0 && (
+          {filtered.length === 0 && !loading && (
             <View style={[styles.emptyState, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
               <Ionicons name="business-outline" size={40} color={colors.textMuted} />
               <Text style={[styles.emptyText, { color: colors.textMuted }]}>No plazas found</Text>
@@ -283,18 +312,18 @@ export default function AdminTollPlazasScreen() {
           )}
         </ScrollView>
 
-        {/* Add Plaza Modal */}
+        {/* ── Add Plaza Modal ── */}
         <Modal visible={showAddModal} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={[styles.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: colors.foreground }]}>Register New Toll Plaza</Text>
-                <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                <TouchableOpacity onPress={() => { setShowAddModal(false); setNewName(""); setNewRoute(""); setNewLocation(""); }}>
                   <Ionicons name="close" size={24} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
               {[
-                { label: "Plaza Name", placeholder: "e.g. NH-48 Gurugram Plaza", value: newName, setter: setNewName },
+                { label: "Plaza Name *", placeholder: "e.g. NH-48 Gurugram Plaza", value: newName, setter: setNewName },
                 { label: "Highway Route", placeholder: "e.g. NH-48", value: newRoute, setter: setNewRoute },
                 { label: "Location", placeholder: "e.g. Gurugram, Haryana", value: newLocation, setter: setNewLocation },
               ].map(({ label, placeholder, value, setter }) => (
@@ -310,43 +339,29 @@ export default function AdminTollPlazasScreen() {
                 </View>
               ))}
               <TouchableOpacity
-                style={[styles.modalSubmit, { backgroundColor: colors.primary, borderRadius: colors.radius }]}
-                onPress={() => {
-                  if (!newName.trim()) { Alert.alert("Error", "Plaza name is required"); return; }
-                  const newPlaza: TollPlaza = {
-                    id: `PLZ${Date.now()}`,
-                    name: newName.trim(),
-                    route: newRoute.trim() || "—",
-                    location: newLocation.trim() || "—",
-                    operatorId: "",
-                    operatorName: "Unassigned",
-                    workerCount: 0,
-                    activeDevices: 0,
-                    attendanceToday: 0,
-                    attendancePct: 0,
-                    status: "inactive",
-                    lastSync: "Never",
-                    createdAt: new Date().toISOString().split("T")[0],
-                  };
-                  setPlazas((prev) => [...prev, newPlaza]);
-                  setNewName(""); setNewRoute(""); setNewLocation(""); setShowAddModal(false);
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                }}
+                style={[styles.modalSubmit, { backgroundColor: saving ? colors.muted : colors.primary, borderRadius: colors.radius }]}
+                onPress={handleRegisterPlaza}
+                disabled={saving}
               >
-                <Ionicons name="business-outline" size={18} color="#fff" />
-                <Text style={styles.modalSubmitText}>Register Plaza</Text>
+                {saving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <>
+                      <Ionicons name="business-outline" size={18} color="#fff" />
+                      <Text style={styles.modalSubmitText}>Register Plaza</Text>
+                    </>
+                }
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
 
-        {/* Edit Plaza Modal */}
+        {/* ── Edit Plaza Modal ── */}
         <Modal visible={showEditModal} transparent animationType="slide">
           <View style={styles.modalOverlay}>
             <View style={[styles.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: colors.foreground }]}>Edit Toll Plaza</Text>
-                <TouchableOpacity onPress={() => setShowEditModal(false)}>
+                <TouchableOpacity onPress={() => { setShowEditModal(false); setEditPlaza(null); }}>
                   <Ionicons name="close" size={24} color={colors.textMuted} />
                 </TouchableOpacity>
               </View>
@@ -370,23 +385,29 @@ export default function AdminTollPlazasScreen() {
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.modalCancelBtn, { borderColor: colors.border, borderRadius: colors.radius }]}
-                  onPress={() => setShowEditModal(false)}
+                  onPress={() => { setShowEditModal(false); setEditPlaza(null); }}
                 >
                   <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalSubmit, { backgroundColor: colors.primary, borderRadius: colors.radius, flex: 1 }]}
+                  style={[styles.modalSubmit, { backgroundColor: saving ? colors.muted : colors.primary, borderRadius: colors.radius, flex: 1 }]}
                   onPress={handleSaveEdit}
+                  disabled={saving}
                 >
-                  <Ionicons name="checkmark-outline" size={18} color="#fff" />
-                  <Text style={styles.modalSubmitText}>Save Changes</Text>
+                  {saving
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <>
+                        <Ionicons name="checkmark-outline" size={18} color="#fff" />
+                        <Text style={styles.modalSubmitText}>Save Changes</Text>
+                      </>
+                  }
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
 
-        {/* Monitor Modal */}
+        {/* ── Monitor Modal ── */}
         {monitorPlaza && (
           <Modal visible={showMonitorModal} transparent animationType="slide">
             <View style={styles.modalOverlay}>
@@ -414,12 +435,12 @@ export default function AdminTollPlazasScreen() {
 
                 <View style={styles.monitorGrid}>
                   {[
-                    { label: "Total Workers", value: monitorPlaza.workerCount, icon: "people-outline" as const, color: colors.accent },
-                    { label: "Attendance Today", value: monitorPlaza.workerCount > 0 ? `${monitorPlaza.attendancePct}%` : "—", icon: "checkmark-circle-outline" as const, color: monitorPlaza.attendancePct >= 90 ? colors.success : monitorPlaza.attendancePct >= 75 ? colors.warning : colors.destructive },
-                    { label: "Active Devices", value: monitorPlaza.activeDevices, icon: "phone-portrait-outline" as const, color: colors.warning },
-                    { label: "Last Sync", value: monitorPlaza.lastSync, icon: "sync-outline" as const, color: colors.textSecondary },
-                    { label: "Operator", value: monitorPlaza.operatorName, icon: "person-outline" as const, color: colors.accent },
-                    { label: "Created", value: monitorPlaza.createdAt, icon: "calendar-outline" as const, color: colors.textMuted },
+                    { label: "Total Workers",     value: monitorPlaza.workerCount, icon: "people-outline" as const, color: colors.accent },
+                    { label: "Attendance Today",  value: monitorPlaza.workerCount > 0 ? `${monitorPlaza.attendancePct}%` : "—", icon: "checkmark-circle-outline" as const, color: monitorPlaza.attendancePct >= 90 ? colors.success : monitorPlaza.attendancePct >= 75 ? colors.warning : colors.destructive },
+                    { label: "Active Devices",    value: monitorPlaza.activeDevices, icon: "phone-portrait-outline" as const, color: colors.warning },
+                    { label: "Last Sync",         value: monitorPlaza.lastSync, icon: "sync-outline" as const, color: colors.textSecondary },
+                    { label: "Operator",          value: monitorPlaza.operatorName, icon: "person-outline" as const, color: colors.accent },
+                    { label: "Created",           value: monitorPlaza.createdAt, icon: "calendar-outline" as const, color: colors.textMuted },
                   ].map(({ label, value, icon, color }) => (
                     <View key={label} style={[styles.monitorStatCard, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
                       <Ionicons name={icon} size={18} color={color} />
@@ -429,7 +450,6 @@ export default function AdminTollPlazasScreen() {
                   ))}
                 </View>
 
-                {/* Attendance Bar */}
                 {monitorPlaza.workerCount > 0 && (
                   <View style={styles.monitorBarSection}>
                     <View style={styles.monitorBarHeader}>

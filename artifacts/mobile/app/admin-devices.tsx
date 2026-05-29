@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { MOCK_OPERATORS, MOCK_TOLL_PLAZAS } from "@/services/adminData";
+import { useAdminData } from "@/contexts/AdminDataContext";
 import {
   type DevicePlatform,
   type DeviceStatus,
@@ -393,7 +393,7 @@ export default function AdminDevicesScreen() {
     if (!regName.trim() || !regModel.trim()) return;
     setSaving(true);
     try {
-      const plaza = MOCK_TOLL_PLAZAS.find((p) => p.id === regPlazaId);
+      const plaza = plazas.find((p) => p.id === regPlazaId);
       await registerDevice({
         deviceName:        regName.trim(),
         deviceModel:       regModel.trim(),
@@ -421,8 +421,8 @@ export default function AdminDevicesScreen() {
     setSaving(true);
     try {
       const device   = devices.find((d) => d.id === allocDeviceId);
-      const operator = MOCK_OPERATORS.find((o) => o.id === allocOpId);
-      const plaza    = MOCK_TOLL_PLAZAS.find((p) => p.id === operator?.plazaId);
+      const operator = operators.find((o) => o.id === allocOpId);
+      const plaza    = plazas.find((p) => p.id === operator?.plazaId);
       if (!device || !operator) throw new Error("Invalid selection");
       await createAllocation({
         operatorId:   operator.id,
@@ -523,8 +523,8 @@ export default function AdminDevicesScreen() {
       } else if (actionModal.type === "reassign") {
         if (!reassignOpId) { setSaving(false); return; }
         const oldAlloc  = allocs.find((a) => a.id === actionModal.id);
-        const newOp     = MOCK_OPERATORS.find((o) => o.id === reassignOpId);
-        const newPlaza  = MOCK_TOLL_PLAZAS.find((p) => p.id === newOp?.plazaId);
+        const newOp     = operators.find((o) => o.id === reassignOpId);
+        const newPlaza  = plazas.find((p) => p.id === newOp?.plazaId);
         if (!oldAlloc || !newOp) { setSaving(false); return; }
         await updateAllocationStatus(actionModal.id, "replaced", "Reassigned to new operator");
         await createAllocation({
@@ -555,7 +555,8 @@ export default function AdminDevicesScreen() {
   const filteredDevices = devices.filter((d) => regFilter === "all" ? true : d.status === regFilter);
   const filteredAllocs  = allocs.filter((a) => alFilter === "all" ? true : a.status === alFilter);
   const availableDevs   = devices.filter((d) => d.status === "available");
-  const activeOperators = MOCK_OPERATORS.filter((o) => o.status === "active");
+  const { plazas, operators } = useAdminData();
+  const activeOperators = operators.filter((o) => o.status === "active");
 
   const kpis = [
     { label: "Registered", value: devices.length,                                       color: colors.primary },
@@ -918,7 +919,7 @@ export default function AdminDevicesScreen() {
                   >
                     <Text style={[st.plazaChipText, { color: regPlazaId === "" ? colors.primary : colors.textSecondary }]}>None</Text>
                   </TouchableOpacity>
-                  {MOCK_TOLL_PLAZAS.filter((p) => p.status !== "inactive").map((plaza) => (
+                  {plazas.filter((p) => p.status !== "inactive").map((plaza) => (
                     <TouchableOpacity
                       key={plaza.id}
                       style={[st.plazaChip, { backgroundColor: regPlazaId === plaza.id ? colors.primary + "18" : colors.surface, borderColor: regPlazaId === plaza.id ? colors.primary : colors.border }]}
@@ -1007,7 +1008,7 @@ export default function AdminDevicesScreen() {
 
               <Text style={[st.sectionLabel, { color: colors.textSecondary, marginTop: 16 }]}>Select Operator</Text>
               {activeOperators.map((op) => {
-                const plaza = MOCK_TOLL_PLAZAS.find((p) => p.id === op.plazaId);
+                const plaza = plazas.find((p) => p.id === op.plazaId);
                 return (
                   <TouchableOpacity
                     key={op.id}
@@ -1026,7 +1027,7 @@ export default function AdminDevicesScreen() {
 
               {allocOpId && allocDeviceId && (() => {
                 const dev = devices.find((d) => d.id === allocDeviceId);
-                const op  = MOCK_OPERATORS.find((o) => o.id === allocOpId);
+                const op  = operators.find((o) => o.id === allocOpId);
                 return (
                   <View style={[st.allocSummary, { backgroundColor: colors.success + "12", borderColor: colors.success + "44", borderRadius: colors.radius }]}>
                     <Ionicons name="shield-checkmark-outline" size={16} color={colors.success} />

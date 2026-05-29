@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Modal,
   Platform,
   ScrollView,
@@ -15,7 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { MOCK_DEVICES, MOCK_OPERATORS, MOCK_TOLL_PLAZAS, type AdminOperator } from "@/services/adminData";
+import { useAdminData } from "@/contexts/AdminDataContext";
+import type { AdminOperator } from "@/services/adminData";
 import { useColors } from "@/hooks/useColors";
 
 type OpFilter = "all" | "active" | "suspended" | "pending";
@@ -103,51 +105,51 @@ export default function AdminOperatorsScreen() {
   const insets = useSafeAreaInsets();
   const botPad = Platform.OS === "web" ? 24 : insets.bottom + 20;
 
-  const [filter, setFilter] = useState<OpFilter>("all");
-  const [operators, setOperators] = useState<AdminOperator[]>([...MOCK_OPERATORS]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState<CreateForm>(emptyForm);
-  const [formErrors, setFormErrors] = useState<Partial<CreateForm>>({});
+  const { operators, plazas, allocations, devices, addOperator, updateOperatorData } = useAdminData();
+
+  const [filter, setFilter]           = useState<OpFilter>("all");
+  const [saving, setSaving]           = useState(false);
+  const [showCreate, setShowCreate]   = useState(false);
+  const [form, setFormState]          = useState<CreateForm>(emptyForm);
+  const [formErrors, setFormErrors]   = useState<Partial<CreateForm>>({});
   const [showPassword, setShowPassword] = useState(false);
 
-  // Suspend confirm modal
   const [suspendTarget, setSuspendTarget] = useState<AdminOperator | null>(null);
-
-  // Reset password modal
-  const [resetTarget, setResetTarget] = useState<AdminOperator | null>(null);
-  const [generatedPwd, setGeneratedPwd] = useState("");
-  const [pwdCopied, setPwdCopied] = useState(false);
-
-  // Device modal
-  const [deviceTarget, setDeviceTarget] = useState<AdminOperator | null>(null);
-
-  // Success banner
-  const [successMsg, setSuccessMsg] = useState("");
+  const [resetTarget, setResetTarget]     = useState<AdminOperator | null>(null);
+  const [generatedPwd, setGeneratedPwd]   = useState("");
+  const [pwdCopied, setPwdCopied]         = useState(false);
+  const [deviceTarget, setDeviceTarget]   = useState<AdminOperator | null>(null);
+  const [successMsg, setSuccessMsg]       = useState("");
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(""), 3000);
   };
 
-  const filtered = operators.filter((op) =>
-    filter === "all" ? true : op.status === filter
-  );
+  const filtered = operators.filter((op) => filter === "all" ? true : op.status === filter);
 
   const kpis = [
-    { label: "Total", value: operators.length, color: colors.primary },
-    { label: "Active", value: operators.filter((o) => o.status === "active").length, color: colors.success },
-    { label: "Suspended", value: operators.filter((o) => o.status === "suspended").length, color: colors.destructive },
-    { label: "Pending", value: operators.filter((o) => o.status === "pending").length, color: colors.warning },
+    { label: "Total",     value: operators.length,                                          color: colors.primary },
+    { label: "Active",    value: operators.filter((o) => o.status === "active").length,     color: colors.success },
+    { label: "Suspended", value: operators.filter((o) => o.status === "suspended").length,  color: colors.destructive },
+    { label: "Pending",   value: operators.filter((o) => o.status === "pending").length,    color: colors.warning },
   ];
 
-  const handleAction = (action: string, op: AdminOperator) => {
+  const handleAction = async (action: string, op: AdminOperator) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (action === "suspend") {
       setSuspendTarget(op);
     } else if (action === "activate") {
-      setOperators((prev) => prev.map((o) => o.id === op.id ? { ...o, status: "active" } : o));
-      showSuccess(`${op.name} account activated successfully.`);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setSaving(true);
+      try {
+        await updateOperatorData(op.id, { status: "active" });
+        showSuccess(`${op.name} account activated successfully.`);
+        console.log("[admin-operators] activate success:", op.id);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (e) {
+        console.error("[admin-operators] activate error:", e);
+      }
+      setSaving(false);
     } else if (action === "resetPwd") {
       const pwd = generateTempPassword();
       setGeneratedPwd(pwd);
@@ -158,12 +160,19 @@ export default function AdminOperatorsScreen() {
     }
   };
 
-  const confirmSuspend = () => {
+  const confirmSuspend = async () => {
     if (!suspendTarget) return;
-    setOperators((prev) => prev.map((o) => o.id === suspendTarget.id ? { ...o, status: "suspended" } : o));
-    showSuccess(`${suspendTarget.name} has been suspended.`);
-    setSuspendTarget(null);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setSaving(true);
+    try {
+      await updateOperatorData(suspendTarget.id, { status: "suspended" });
+      showSuccess(`${suspendTarget.name} has been suspended.`);
+      console.log("[admin-operators] suspend success:", suspendTarget.id);
+      setSuspendTarget(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } catch (e) {
+      console.error("[admin-operators] suspend error:", e);
+    }
+    setSaving(false);
   };
 
   const validateCreate = () => {
@@ -177,42 +186,43 @@ export default function AdminOperatorsScreen() {
     return Object.keys(e).length === 0;
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!validateCreate()) return;
-    const plaza = MOCK_TOLL_PLAZAS.find((p) => p.id === form.plazaId);
-    const newOp: AdminOperator = {
-      id: form.userId,
-      userId: form.userId.toUpperCase(),
-      name: form.name.trim(),
-      mobile: form.mobile.trim(),
-      email: form.email.trim(),
-      plazaId: form.plazaId,
-      plazaName: plaza?.name ?? "Unassigned",
-      status: "pending",
-      lastLogin: "Never",
-      loginCount: 0,
-      deviceCount: 0,
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-    setOperators((prev) => [newOp, ...prev]);
-    setShowCreate(false);
-    setForm(emptyForm);
-    setFormErrors({});
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    showSuccess(`Operator ${form.name} created. Assign a device next.`);
+    const plaza = plazas.find((p) => p.id === form.plazaId);
+    setSaving(true);
+    try {
+      const op = await addOperator({
+        userId:    form.userId,
+        name:      form.name.trim(),
+        mobile:    form.mobile.trim(),
+        email:     form.email.trim(),
+        plazaId:   form.plazaId,
+        plazaName: plaza?.name ?? "Unassigned",
+        status:    "pending",
+      });
+      console.log("[admin-operators] create success:", op.id, op.name);
+      setShowCreate(false);
+      setFormState(emptyForm);
+      setFormErrors({});
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showSuccess(`Operator ${form.name} created. Assign a device next.`);
+    } catch (e) {
+      console.error("[admin-operators] create error:", e);
+    }
+    setSaving(false);
   };
 
   const setField = (k: keyof CreateForm, v: string) => {
-    setForm((f) => ({ ...f, [k]: v }));
+    setFormState((f) => ({ ...f, [k]: v }));
     setFormErrors((e) => ({ ...e, [k]: undefined }));
     if (k === "name" && !form.userId) {
       const suggested = `OPR${String(operators.length + 1).padStart(3, "0")}`;
-      setForm((f) => ({ ...f, name: v, userId: suggested }));
+      setFormState((f) => ({ ...f, name: v, userId: suggested }));
     }
   };
 
-  const deviceInfo = deviceTarget
-    ? MOCK_DEVICES.filter((d) => d.operatorId === deviceTarget.id)
+  const deviceInfoAllocs = deviceTarget
+    ? allocations.filter((a) => a.operatorId === deviceTarget.id && a.status === "active")
     : [];
 
   return (
@@ -220,7 +230,6 @@ export default function AdminOperatorsScreen() {
       <View style={[st.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Operator Management" showBack />
 
-        {/* Success Banner */}
         {successMsg !== "" && (
           <View style={[st.successBanner, { backgroundColor: colors.success + "22", borderColor: colors.success + "55" }]}>
             <Ionicons name="checkmark-circle" size={16} color={colors.success} />
@@ -240,7 +249,7 @@ export default function AdminOperatorsScreen() {
             ))}
           </View>
 
-          {/* Create Operator Button */}
+          {/* Create Button */}
           <TouchableOpacity
             style={[st.createBtn, { backgroundColor: colors.accent, borderRadius: colors.radius }]}
             onPress={() => { setShowCreate(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); }}
@@ -285,18 +294,18 @@ export default function AdminOperatorsScreen() {
               They will lose access until reactivated.
             </Text>
             <View style={st.confirmBtns}>
-              <TouchableOpacity
-                style={[st.confirmCancelBtn, { borderColor: colors.border }]}
-                onPress={() => setSuspendTarget(null)}
-              >
+              <TouchableOpacity style={[st.confirmCancelBtn, { borderColor: colors.border }]} onPress={() => setSuspendTarget(null)}>
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[st.confirmActionBtn, { backgroundColor: colors.warning }]}
+                style={[st.confirmActionBtn, { backgroundColor: saving ? colors.muted : colors.warning }]}
                 onPress={confirmSuspend}
+                disabled={saving}
               >
-                <Ionicons name="pause-outline" size={16} color="#fff" />
-                <Text style={st.confirmText}>Suspend</Text>
+                {saving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <><Ionicons name="pause-outline" size={16} color="#fff" /><Text style={st.confirmText}>Suspend</Text></>
+                }
               </TouchableOpacity>
             </View>
           </View>
@@ -316,57 +325,38 @@ export default function AdminOperatorsScreen() {
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
-
             <View style={[st.sheetBody, { gap: 16 }]}>
               <Text style={[st.resetSubtitle, { color: colors.textSecondary }]}>
                 A temporary password has been generated for{" "}
                 <Text style={{ fontWeight: "700", color: colors.foreground }}>{resetTarget?.name}</Text>.
                 Share it securely — they must change it on next login.
               </Text>
-
               <View style={[st.pwdBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Text style={[st.pwdText, { color: colors.foreground }]} selectable>{generatedPwd}</Text>
                 <TouchableOpacity
                   style={[st.copyBtn, { backgroundColor: pwdCopied ? colors.success + "22" : colors.primary + "18" }]}
-                  onPress={() => {
-                    setPwdCopied(true);
-                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  }}
+                  onPress={() => { setPwdCopied(true); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }}
                 >
                   <Ionicons name={pwdCopied ? "checkmark-outline" : "copy-outline"} size={16} color={pwdCopied ? colors.success : colors.accent} />
-                  <Text style={[st.copyBtnText, { color: pwdCopied ? colors.success : colors.accent }]}>
-                    {pwdCopied ? "Copied" : "Copy"}
-                  </Text>
+                  <Text style={[st.copyBtnText, { color: pwdCopied ? colors.success : colors.accent }]}>{pwdCopied ? "Copied" : "Copy"}</Text>
                 </TouchableOpacity>
               </View>
-
-              <TouchableOpacity
-                style={[st.regenBtn, { borderColor: colors.border }]}
-                onPress={() => { setGeneratedPwd(generateTempPassword()); setPwdCopied(false); }}
-              >
+              <TouchableOpacity style={[st.regenBtn, { borderColor: colors.border }]} onPress={() => { setGeneratedPwd(generateTempPassword()); setPwdCopied(false); }}>
                 <Ionicons name="refresh-outline" size={15} color={colors.textSecondary} />
                 <Text style={[st.regenText, { color: colors.textSecondary }]}>Generate New</Text>
               </TouchableOpacity>
-
               <View style={[st.resetInfo, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "33", borderRadius: colors.radius }]}>
                 <Ionicons name="warning-outline" size={14} color={colors.warning} />
-                <Text style={[st.resetInfoText, { color: colors.warning }]}>
-                  Previous password will be invalidated immediately upon confirmation.
-                </Text>
+                <Text style={[st.resetInfoText, { color: colors.warning }]}>Previous password will be invalidated immediately upon confirmation.</Text>
               </View>
             </View>
-
             <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
               <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => setResetTarget(null)}>
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[st.confirmBtn, { backgroundColor: colors.accent }]}
-                onPress={() => {
-                  setResetTarget(null);
-                  showSuccess(`Password reset for ${resetTarget?.name}.`);
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                }}
+                onPress={() => { setResetTarget(null); showSuccess(`Password reset for ${resetTarget?.name}.`); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }}
               >
                 <Ionicons name="checkmark-outline" size={16} color="#fff" />
                 <Text style={st.confirmText}>Confirm Reset</Text>
@@ -389,7 +379,6 @@ export default function AdminOperatorsScreen() {
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
-
             <View style={st.sheetBody}>
               <View style={[st.deviceOpRow, { backgroundColor: colors.primary + "11", borderRadius: colors.radius }]}>
                 <View style={[st.avatar, { backgroundColor: colors.primary }]}>
@@ -401,7 +390,7 @@ export default function AdminOperatorsScreen() {
                 </View>
               </View>
 
-              {deviceInfo.length === 0 ? (
+              {deviceInfoAllocs.length === 0 ? (
                 <View style={[st.noDevice, { borderColor: colors.border }]}>
                   <Ionicons name="phone-portrait-outline" size={32} color={colors.textMuted} />
                   <Text style={[st.noDeviceText, { color: colors.textMuted }]}>No device allocated</Text>
@@ -414,28 +403,29 @@ export default function AdminOperatorsScreen() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                deviceInfo.map((dev) => {
-                  const statusColor = dev.status === "active" ? colors.success : dev.status === "blocked" ? colors.destructive : colors.warning;
+                deviceInfoAllocs.map((alloc) => {
+                  const dev = devices.find((d) => d.id === alloc.deviceId);
+                  const statusColor = alloc.status === "active" ? colors.success : alloc.status === "blocked" ? colors.destructive : colors.warning;
                   return (
-                    <View key={dev.id} style={[st.deviceCard, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
+                    <View key={alloc.id} style={[st.deviceCard, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
                       <View style={st.deviceCardHeader}>
                         <View style={[st.deviceIconWrap, { backgroundColor: statusColor + "22" }]}>
-                          <Ionicons name={dev.deviceType === "ios" ? "logo-apple" : "logo-android"} size={20} color={statusColor} />
+                          <Ionicons name={alloc.platform === "ios" ? "logo-apple" : alloc.platform === "web" ? "globe-outline" : "logo-android"} size={20} color={statusColor} />
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={[st.deviceName, { color: colors.foreground }]}>{dev.deviceModel}</Text>
-                          <Text style={[st.deviceSub, { color: colors.textMuted }]}>IMEI: {dev.imei}</Text>
+                          <Text style={[st.deviceName, { color: colors.foreground }]}>{alloc.deviceModel}</Text>
+                          <Text style={[st.deviceSub, { color: colors.textMuted }]}>ID: {alloc.deviceId}</Text>
                         </View>
                         <View style={[st.statusPill, { backgroundColor: statusColor + "22" }]}>
                           <View style={[st.statusDot, { backgroundColor: statusColor }]} />
-                          <Text style={[st.statusText, { color: statusColor }]}>{dev.status.charAt(0).toUpperCase() + dev.status.slice(1)}</Text>
+                          <Text style={[st.statusText, { color: statusColor }]}>{alloc.status.charAt(0).toUpperCase() + alloc.status.slice(1)}</Text>
                         </View>
                       </View>
                       {[
-                        { label: "Device ID", value: dev.id },
-                        { label: "Last Active", value: dev.lastActive },
-                        { label: "Allocated", value: dev.allocatedAt },
-                        { label: "Unauth Attempts", value: String(dev.unauthorizedAttempts) },
+                        { label: "Device ID",   value: alloc.deviceId },
+                        { label: "Platform",    value: alloc.platform },
+                        { label: "IMEI",        value: dev?.imeiNumber ?? "—" },
+                        { label: "Allocated",   value: alloc.allocatedAt },
                       ].map(({ label, value }) => (
                         <View key={label} style={[st.deviceRow, { borderTopColor: colors.border }]}>
                           <Text style={[st.deviceRowLabel, { color: colors.textMuted }]}>{label}</Text>
@@ -447,7 +437,6 @@ export default function AdminOperatorsScreen() {
                 })
               )}
             </View>
-
             <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
               <TouchableOpacity
                 style={[st.confirmBtn, { backgroundColor: colors.primary, flex: 1 }]}
@@ -467,7 +456,7 @@ export default function AdminOperatorsScreen() {
           <View style={[st.sheet, { backgroundColor: colors.card }]}>
             <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
               <Text style={[st.sheetTitle, { color: colors.foreground }]}>Create Operator Account</Text>
-              <TouchableOpacity onPress={() => { setShowCreate(false); setForm(emptyForm); setFormErrors({}); }}>
+              <TouchableOpacity onPress={() => { setShowCreate(false); setFormState(emptyForm); setFormErrors({}); }}>
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
@@ -481,11 +470,11 @@ export default function AdminOperatorsScreen() {
               </View>
 
               {[
-                { key: "name", label: "Full Name *", placeholder: "e.g. Amit Sharma", secure: false },
-                { key: "userId", label: "User ID *", placeholder: "e.g. OPR006", secure: false },
-                { key: "password", label: "Password *", placeholder: "Min 6 characters", secure: true },
-                { key: "mobile", label: "Mobile Number *", placeholder: "10-digit mobile number", secure: false },
-                { key: "email", label: "Email (optional)", placeholder: "operator@spectra.in", secure: false },
+                { key: "name",     label: "Full Name *",        placeholder: "e.g. Amit Sharma",      secure: false },
+                { key: "userId",   label: "User ID *",          placeholder: "e.g. OPR006",           secure: false },
+                { key: "password", label: "Password *",         placeholder: "Min 6 characters",      secure: true },
+                { key: "mobile",   label: "Mobile Number *",    placeholder: "10-digit mobile number", secure: false },
+                { key: "email",    label: "Email (optional)",   placeholder: "operator@spectra.in",   secure: false },
               ].map(({ key, label, placeholder, secure }) => (
                 <View key={key} style={st.fieldGroup}>
                   <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>{label}</Text>
@@ -515,7 +504,7 @@ export default function AdminOperatorsScreen() {
               <View style={st.fieldGroup}>
                 <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Assign Toll Plaza *</Text>
                 {formErrors.plazaId && <Text style={[st.errText, { color: colors.destructive }]}>{formErrors.plazaId}</Text>}
-                {MOCK_TOLL_PLAZAS.filter((p) => p.status !== "inactive").map((plaza) => (
+                {plazas.filter((p) => p.status !== "inactive").map((plaza) => (
                   <TouchableOpacity
                     key={plaza.id}
                     style={[st.plazaRow, { backgroundColor: form.plazaId === plaza.id ? colors.primary + "18" : colors.surface, borderColor: form.plazaId === plaza.id ? colors.primary : colors.border, borderRadius: colors.radius }]}
@@ -533,12 +522,18 @@ export default function AdminOperatorsScreen() {
             </ScrollView>
 
             <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
-              <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => { setShowCreate(false); setForm(emptyForm); setFormErrors({}); }}>
+              <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => { setShowCreate(false); setFormState(emptyForm); setFormErrors({}); }}>
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[st.confirmBtn, { backgroundColor: colors.accent }]} onPress={handleCreate}>
-                <Ionicons name="person-add-outline" size={16} color="#fff" />
-                <Text style={st.confirmText}>Create Operator</Text>
+              <TouchableOpacity
+                style={[st.confirmBtn, { backgroundColor: saving ? colors.muted : colors.accent }]}
+                onPress={handleCreate}
+                disabled={saving}
+              >
+                {saving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <><Ionicons name="person-add-outline" size={16} color="#fff" /><Text style={st.confirmText}>Create Operator</Text></>
+                }
               </TouchableOpacity>
             </View>
           </View>
