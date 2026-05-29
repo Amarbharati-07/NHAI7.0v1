@@ -3,7 +3,6 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
   Modal,
   Platform,
   ScrollView,
@@ -16,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { MOCK_OPERATORS, MOCK_TOLL_PLAZAS, type AdminOperator } from "@/services/adminData";
+import { MOCK_DEVICES, MOCK_OPERATORS, MOCK_TOLL_PLAZAS, type AdminOperator } from "@/services/adminData";
 import { useColors } from "@/hooks/useColors";
 
 type OpFilter = "all" | "active" | "suspended" | "pending";
@@ -86,63 +85,94 @@ function OperatorCard({ op, onAction }: { op: AdminOperator; onAction: (action: 
   );
 }
 
-/* ── Create Operator Form defaults ── */
 interface CreateForm {
   name: string; userId: string; password: string;
   mobile: string; email: string; plazaId: string;
 }
 const emptyForm: CreateForm = { name: "", userId: "", password: "", mobile: "", email: "", plazaId: "" };
 
-/* ══════════════ MAIN SCREEN ══════════════ */
+function generateTempPassword() {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#$";
+  let pwd = "";
+  for (let i = 0; i < 10; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+  return pwd;
+}
+
 export default function AdminOperatorsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const botPad = Platform.OS === "web" ? 24 : insets.bottom + 20;
 
-  const [filter,        setFilter]        = useState<OpFilter>("all");
-  const [operators,     setOperators]     = useState<AdminOperator[]>([...MOCK_OPERATORS]);
-  const [showCreate,    setShowCreate]    = useState(false);
-  const [form,          setForm]          = useState<CreateForm>(emptyForm);
-  const [formErrors,    setFormErrors]    = useState<Partial<CreateForm>>({});
-  const [showPassword,  setShowPassword]  = useState(false);
+  const [filter, setFilter] = useState<OpFilter>("all");
+  const [operators, setOperators] = useState<AdminOperator[]>([...MOCK_OPERATORS]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState<CreateForm>(emptyForm);
+  const [formErrors, setFormErrors] = useState<Partial<CreateForm>>({});
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Suspend confirm modal
+  const [suspendTarget, setSuspendTarget] = useState<AdminOperator | null>(null);
+
+  // Reset password modal
+  const [resetTarget, setResetTarget] = useState<AdminOperator | null>(null);
+  const [generatedPwd, setGeneratedPwd] = useState("");
+  const [pwdCopied, setPwdCopied] = useState(false);
+
+  // Device modal
+  const [deviceTarget, setDeviceTarget] = useState<AdminOperator | null>(null);
+
+  // Success banner
+  const [successMsg, setSuccessMsg] = useState("");
+
+  const showSuccess = (msg: string) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(""), 3000);
+  };
 
   const filtered = operators.filter((op) =>
     filter === "all" ? true : op.status === filter
   );
 
   const kpis = [
-    { label: "Total",     value: operators.length,                                    color: colors.primary },
-    { label: "Active",    value: operators.filter((o) => o.status === "active").length,    color: colors.success },
+    { label: "Total", value: operators.length, color: colors.primary },
+    { label: "Active", value: operators.filter((o) => o.status === "active").length, color: colors.success },
     { label: "Suspended", value: operators.filter((o) => o.status === "suspended").length, color: colors.destructive },
-    { label: "Pending",   value: operators.filter((o) => o.status === "pending").length,   color: colors.warning },
+    { label: "Pending", value: operators.filter((o) => o.status === "pending").length, color: colors.warning },
   ];
 
   const handleAction = (action: string, op: AdminOperator) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (action === "suspend") {
-      Alert.alert("Suspend Operator", `Suspend ${op.name}?`, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Suspend", style: "destructive", onPress: () =>
-          setOperators((prev) => prev.map((o) => o.id === op.id ? { ...o, status: "suspended" } : o))
-        },
-      ]);
+      setSuspendTarget(op);
     } else if (action === "activate") {
       setOperators((prev) => prev.map((o) => o.id === op.id ? { ...o, status: "active" } : o));
-      Alert.alert("Activated", `${op.name} account activated.`);
+      showSuccess(`${op.name} account activated successfully.`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else if (action === "resetPwd") {
-      Alert.alert("Password Reset", `A new password has been generated for ${op.name} (${op.userId}).`);
+      const pwd = generateTempPassword();
+      setGeneratedPwd(pwd);
+      setPwdCopied(false);
+      setResetTarget(op);
     } else if (action === "viewDevice") {
-      router.push("/admin-devices" as never);
+      setDeviceTarget(op);
     }
+  };
+
+  const confirmSuspend = () => {
+    if (!suspendTarget) return;
+    setOperators((prev) => prev.map((o) => o.id === suspendTarget.id ? { ...o, status: "suspended" } : o));
+    showSuccess(`${suspendTarget.name} has been suspended.`);
+    setSuspendTarget(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
   };
 
   const validateCreate = () => {
     const e: Partial<CreateForm> = {};
-    if (!form.name.trim())     e.name     = "Name required";
-    if (!form.userId.trim())   e.userId   = "User ID required";
+    if (!form.name.trim()) e.name = "Name required";
+    if (!form.userId.trim()) e.userId = "User ID required";
     if (!form.password.trim()) e.password = "Password required";
-    if (!form.mobile.trim())   e.mobile   = "Mobile required";
-    if (!form.plazaId)         e.plazaId  = "Assign a plaza";
+    if (!form.mobile.trim()) e.mobile = "Mobile required";
+    if (!form.plazaId) e.plazaId = "Assign a plaza";
     setFormErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -151,25 +181,25 @@ export default function AdminOperatorsScreen() {
     if (!validateCreate()) return;
     const plaza = MOCK_TOLL_PLAZAS.find((p) => p.id === form.plazaId);
     const newOp: AdminOperator = {
-      id:          form.userId,
-      userId:      form.userId.toUpperCase(),
-      name:        form.name.trim(),
-      mobile:      form.mobile.trim(),
-      email:       form.email.trim(),
-      plazaId:     form.plazaId,
-      plazaName:   plaza?.name ?? "Unassigned",
-      status:      "pending",
-      lastLogin:   "Never",
-      loginCount:  0,
+      id: form.userId,
+      userId: form.userId.toUpperCase(),
+      name: form.name.trim(),
+      mobile: form.mobile.trim(),
+      email: form.email.trim(),
+      plazaId: form.plazaId,
+      plazaName: plaza?.name ?? "Unassigned",
+      status: "pending",
+      lastLogin: "Never",
+      loginCount: 0,
       deviceCount: 0,
-      createdAt:   new Date().toISOString().split("T")[0],
+      createdAt: new Date().toISOString().split("T")[0],
     };
     setOperators((prev) => [newOp, ...prev]);
     setShowCreate(false);
     setForm(emptyForm);
     setFormErrors({});
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert("Operator Created", `${form.name} account created.\nUser ID: ${form.userId.toUpperCase()}\n\nNext step: Register and allocate a device for this operator.`);
+    showSuccess(`Operator ${form.name} created. Assign a device next.`);
   };
 
   const setField = (k: keyof CreateForm, v: string) => {
@@ -181,10 +211,22 @@ export default function AdminOperatorsScreen() {
     }
   };
 
+  const deviceInfo = deviceTarget
+    ? MOCK_DEVICES.filter((d) => d.operatorId === deviceTarget.id)
+    : [];
+
   return (
     <DrawerOverlay>
       <View style={[st.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Operator Management" showBack />
+
+        {/* Success Banner */}
+        {successMsg !== "" && (
+          <View style={[st.successBanner, { backgroundColor: colors.success + "22", borderColor: colors.success + "55" }]}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+            <Text style={[st.successText, { color: colors.success }]}>{successMsg}</Text>
+          </View>
+        )}
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[st.scroll, { paddingBottom: botPad }]}>
 
@@ -230,6 +272,195 @@ export default function AdminOperatorsScreen() {
         </ScrollView>
       </View>
 
+      {/* ── Suspend Confirm Modal ── */}
+      <Modal visible={suspendTarget !== null} transparent animationType="fade" onRequestClose={() => setSuspendTarget(null)}>
+        <View style={st.overlay}>
+          <View style={[st.confirmSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[st.confirmIconWrap, { backgroundColor: colors.warning + "22" }]}>
+              <Ionicons name="pause-circle-outline" size={32} color={colors.warning} />
+            </View>
+            <Text style={[st.confirmTitle, { color: colors.foreground }]}>Suspend Operator</Text>
+            <Text style={[st.confirmBody, { color: colors.textSecondary }]}>
+              Suspend <Text style={{ fontWeight: "700", color: colors.foreground }}>{suspendTarget?.name}</Text>?{"\n"}
+              They will lose access until reactivated.
+            </Text>
+            <View style={st.confirmBtns}>
+              <TouchableOpacity
+                style={[st.confirmCancelBtn, { borderColor: colors.border }]}
+                onPress={() => setSuspendTarget(null)}
+              >
+                <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[st.confirmActionBtn, { backgroundColor: colors.warning }]}
+                onPress={confirmSuspend}
+              >
+                <Ionicons name="pause-outline" size={16} color="#fff" />
+                <Text style={st.confirmText}>Suspend</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Reset Password Modal ── */}
+      <Modal visible={resetTarget !== null} transparent animationType="slide" onRequestClose={() => setResetTarget(null)}>
+        <View style={st.overlay}>
+          <View style={[st.sheet, { backgroundColor: colors.card }]}>
+            <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="key-outline" size={18} color={colors.accent} />
+                <Text style={[st.sheetTitle, { color: colors.foreground }]}>Reset Password</Text>
+              </View>
+              <TouchableOpacity onPress={() => setResetTarget(null)}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={[st.sheetBody, { gap: 16 }]}>
+              <Text style={[st.resetSubtitle, { color: colors.textSecondary }]}>
+                A temporary password has been generated for{" "}
+                <Text style={{ fontWeight: "700", color: colors.foreground }}>{resetTarget?.name}</Text>.
+                Share it securely — they must change it on next login.
+              </Text>
+
+              <View style={[st.pwdBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[st.pwdText, { color: colors.foreground }]} selectable>{generatedPwd}</Text>
+                <TouchableOpacity
+                  style={[st.copyBtn, { backgroundColor: pwdCopied ? colors.success + "22" : colors.primary + "18" }]}
+                  onPress={() => {
+                    setPwdCopied(true);
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  }}
+                >
+                  <Ionicons name={pwdCopied ? "checkmark-outline" : "copy-outline"} size={16} color={pwdCopied ? colors.success : colors.accent} />
+                  <Text style={[st.copyBtnText, { color: pwdCopied ? colors.success : colors.accent }]}>
+                    {pwdCopied ? "Copied" : "Copy"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[st.regenBtn, { borderColor: colors.border }]}
+                onPress={() => { setGeneratedPwd(generateTempPassword()); setPwdCopied(false); }}
+              >
+                <Ionicons name="refresh-outline" size={15} color={colors.textSecondary} />
+                <Text style={[st.regenText, { color: colors.textSecondary }]}>Generate New</Text>
+              </TouchableOpacity>
+
+              <View style={[st.resetInfo, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "33", borderRadius: colors.radius }]}>
+                <Ionicons name="warning-outline" size={14} color={colors.warning} />
+                <Text style={[st.resetInfoText, { color: colors.warning }]}>
+                  Previous password will be invalidated immediately upon confirmation.
+                </Text>
+              </View>
+            </View>
+
+            <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => setResetTarget(null)}>
+                <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[st.confirmBtn, { backgroundColor: colors.accent }]}
+                onPress={() => {
+                  setResetTarget(null);
+                  showSuccess(`Password reset for ${resetTarget?.name}.`);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                }}
+              >
+                <Ionicons name="checkmark-outline" size={16} color="#fff" />
+                <Text style={st.confirmText}>Confirm Reset</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Device Info Modal ── */}
+      <Modal visible={deviceTarget !== null} transparent animationType="slide" onRequestClose={() => setDeviceTarget(null)}>
+        <View style={st.overlay}>
+          <View style={[st.sheet, { backgroundColor: colors.card }]}>
+            <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="phone-portrait-outline" size={18} color={colors.accent} />
+                <Text style={[st.sheetTitle, { color: colors.foreground }]}>Device Info</Text>
+              </View>
+              <TouchableOpacity onPress={() => setDeviceTarget(null)}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={st.sheetBody}>
+              <View style={[st.deviceOpRow, { backgroundColor: colors.primary + "11", borderRadius: colors.radius }]}>
+                <View style={[st.avatar, { backgroundColor: colors.primary }]}>
+                  <Ionicons name="person" size={18} color="#fff" />
+                </View>
+                <View>
+                  <Text style={[st.opName, { color: colors.foreground }]}>{deviceTarget?.name}</Text>
+                  <Text style={[st.opId, { color: colors.textMuted }]}>{deviceTarget?.userId} · {deviceTarget?.plazaName}</Text>
+                </View>
+              </View>
+
+              {deviceInfo.length === 0 ? (
+                <View style={[st.noDevice, { borderColor: colors.border }]}>
+                  <Ionicons name="phone-portrait-outline" size={32} color={colors.textMuted} />
+                  <Text style={[st.noDeviceText, { color: colors.textMuted }]}>No device allocated</Text>
+                  <TouchableOpacity
+                    style={[st.allocateBtn, { backgroundColor: colors.primary, borderRadius: colors.radius }]}
+                    onPress={() => { setDeviceTarget(null); router.push("/admin-devices" as never); }}
+                  >
+                    <Ionicons name="add-outline" size={16} color="#fff" />
+                    <Text style={st.confirmText}>Allocate Device</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                deviceInfo.map((dev) => {
+                  const statusColor = dev.status === "active" ? colors.success : dev.status === "blocked" ? colors.destructive : colors.warning;
+                  return (
+                    <View key={dev.id} style={[st.deviceCard, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
+                      <View style={st.deviceCardHeader}>
+                        <View style={[st.deviceIconWrap, { backgroundColor: statusColor + "22" }]}>
+                          <Ionicons name={dev.deviceType === "ios" ? "logo-apple" : "logo-android"} size={20} color={statusColor} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[st.deviceName, { color: colors.foreground }]}>{dev.deviceModel}</Text>
+                          <Text style={[st.deviceSub, { color: colors.textMuted }]}>IMEI: {dev.imei}</Text>
+                        </View>
+                        <View style={[st.statusPill, { backgroundColor: statusColor + "22" }]}>
+                          <View style={[st.statusDot, { backgroundColor: statusColor }]} />
+                          <Text style={[st.statusText, { color: statusColor }]}>{dev.status.charAt(0).toUpperCase() + dev.status.slice(1)}</Text>
+                        </View>
+                      </View>
+                      {[
+                        { label: "Device ID", value: dev.id },
+                        { label: "Last Active", value: dev.lastActive },
+                        { label: "Allocated", value: dev.allocatedAt },
+                        { label: "Unauth Attempts", value: String(dev.unauthorizedAttempts) },
+                      ].map(({ label, value }) => (
+                        <View key={label} style={[st.deviceRow, { borderTopColor: colors.border }]}>
+                          <Text style={[st.deviceRowLabel, { color: colors.textMuted }]}>{label}</Text>
+                          <Text style={[st.deviceRowValue, { color: colors.foreground }]}>{value}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+
+            <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
+              <TouchableOpacity
+                style={[st.confirmBtn, { backgroundColor: colors.primary, flex: 1 }]}
+                onPress={() => { setDeviceTarget(null); router.push("/admin-devices" as never); }}
+              >
+                <Ionicons name="settings-outline" size={16} color="#fff" />
+                <Text style={st.confirmText}>Manage in Device Center</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Create Operator Modal ── */}
       <Modal visible={showCreate} animationType="slide" transparent onRequestClose={() => setShowCreate(false)}>
         <View style={st.overlay}>
@@ -242,8 +473,6 @@ export default function AdminOperatorsScreen() {
             </View>
 
             <ScrollView style={st.sheetBody} keyboardShouldPersistTaps="handled">
-
-              {/* Workflow note */}
               <View style={[st.noteBanner, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "33", borderRadius: colors.radius }]}>
                 <Ionicons name="information-circle-outline" size={16} color={colors.primary} />
                 <Text style={[st.noteText, { color: colors.primary }]}>
@@ -252,11 +481,11 @@ export default function AdminOperatorsScreen() {
               </View>
 
               {[
-                { key: "name",     label: "Full Name *",            placeholder: "e.g. Amit Sharma",          secure: false },
-                { key: "userId",   label: "User ID *",              placeholder: "e.g. OPR006",               secure: false },
-                { key: "password", label: "Password *",             placeholder: "Min 6 characters",          secure: true  },
-                { key: "mobile",   label: "Mobile Number *",        placeholder: "10-digit mobile number",    secure: false },
-                { key: "email",    label: "Email (optional)",       placeholder: "operator@spectra.in",       secure: false },
+                { key: "name", label: "Full Name *", placeholder: "e.g. Amit Sharma", secure: false },
+                { key: "userId", label: "User ID *", placeholder: "e.g. OPR006", secure: false },
+                { key: "password", label: "Password *", placeholder: "Min 6 characters", secure: true },
+                { key: "mobile", label: "Mobile Number *", placeholder: "10-digit mobile number", secure: false },
+                { key: "email", label: "Email (optional)", placeholder: "operator@spectra.in", secure: false },
               ].map(({ key, label, placeholder, secure }) => (
                 <View key={key} style={st.fieldGroup}>
                   <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>{label}</Text>
@@ -283,7 +512,6 @@ export default function AdminOperatorsScreen() {
                 </View>
               ))}
 
-              {/* Plaza Assignment */}
               <View style={st.fieldGroup}>
                 <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Assign Toll Plaza *</Text>
                 {formErrors.plazaId && <Text style={[st.errText, { color: colors.destructive }]}>{formErrors.plazaId}</Text>}
@@ -323,6 +551,8 @@ export default function AdminOperatorsScreen() {
 const st = StyleSheet.create({
   root: { flex: 1 },
   scroll: { paddingHorizontal: 16, gap: 10 },
+  successBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 10, borderWidth: 1 },
+  successText: { fontSize: 13, fontWeight: "600", flex: 1 },
   kpiRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
   kpiCard: { flex: 1, borderWidth: 1, padding: 10, alignItems: "center", gap: 2 },
   kpiVal: { fontSize: 20, fontWeight: "800" },
@@ -332,7 +562,6 @@ const st = StyleSheet.create({
   filterRow: { flexDirection: "row", gap: 8, paddingVertical: 4, marginBottom: 4 },
   filterPill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 99, borderWidth: 1 },
   filterText: { fontSize: 12, fontWeight: "600" },
-  /* Operator Card */
   opCard: { borderWidth: 1, marginBottom: 8, overflow: "hidden" },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14 },
   avatar: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
@@ -348,13 +577,40 @@ const st = StyleSheet.create({
   actionsRow: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
   actionBtnText: { fontSize: 12, fontWeight: "600" },
-  /* Create Modal */
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
+  confirmSheet: { margin: 20, borderRadius: 16, borderWidth: 1, padding: 24, alignItems: "center", gap: 12, marginBottom: 40 },
+  confirmIconWrap: { width: 60, height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center" },
+  confirmTitle: { fontSize: 18, fontWeight: "700" },
+  confirmBody: { fontSize: 14, textAlign: "center", lineHeight: 20 },
+  confirmBtns: { flexDirection: "row", gap: 12, width: "100%", marginTop: 4 },
+  confirmCancelBtn: { flex: 1, height: 44, borderWidth: 1, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  confirmActionBtn: { flex: 1, height: 44, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "92%", overflow: "hidden" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
   sheetTitle: { fontSize: 17, fontWeight: "700" },
   sheetBody: { paddingHorizontal: 20, paddingVertical: 16, flexGrow: 0 },
   sheetFooter: { flexDirection: "row", gap: 12, paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1 },
+  resetSubtitle: { fontSize: 13, lineHeight: 20 },
+  pwdBox: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
+  pwdText: { flex: 1, fontSize: 18, fontWeight: "700", letterSpacing: 2, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
+  copyBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  copyBtnText: { fontSize: 12, fontWeight: "700" },
+  regenBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
+  regenText: { fontSize: 13, fontWeight: "600" },
+  resetInfo: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderWidth: 1 },
+  resetInfoText: { flex: 1, fontSize: 12, lineHeight: 18 },
+  deviceOpRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: 12 },
+  noDevice: { alignItems: "center", gap: 10, paddingVertical: 30, borderWidth: 1, borderRadius: 10, borderStyle: "dashed" },
+  noDeviceText: { fontSize: 14 },
+  allocateBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 16, paddingVertical: 10, marginTop: 4 },
+  deviceCard: { borderWidth: 1, overflow: "hidden", marginBottom: 8 },
+  deviceCardHeader: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12 },
+  deviceIconWrap: { width: 36, height: 36, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  deviceName: { fontSize: 14, fontWeight: "700" },
+  deviceSub: { fontSize: 11, marginTop: 1 },
+  deviceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 12, paddingVertical: 9, borderTopWidth: 1 },
+  deviceRowLabel: { fontSize: 12 },
+  deviceRowValue: { fontSize: 12, fontWeight: "600" },
   noteBanner: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderWidth: 1, marginBottom: 16 },
   noteText: { flex: 1, fontSize: 12, lineHeight: 18, fontWeight: "500" },
   fieldGroup: { marginBottom: 14, gap: 6 },
