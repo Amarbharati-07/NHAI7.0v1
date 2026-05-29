@@ -59,6 +59,9 @@ export default function RootLayout() {
                     <Stack.Screen name="attendance-success" />
                     <Stack.Screen name="attendance-history" />
                     <Stack.Screen name="worker-details" />
+                    <Stack.Screen name="worker-directory" />
+                    <Stack.Screen name="worker-profile" />
+                    <Stack.Screen name="edit-worker" />
                     <Stack.Screen name="sync-center" />
                     <Stack.Screen name="reports" />
                     <Stack.Screen name="settings" />

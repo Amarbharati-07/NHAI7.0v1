@@ -1,5 +1,7 @@
 import * as SQLite from "expo-sqlite";
 
+export type WorkerStatus = "active" | "inactive" | "transferred";
+
 export interface Worker {
   id?: number;
   workerId: string;
@@ -12,6 +14,18 @@ export interface Worker {
   plazaId?: string;
   operatorId?: string;
   deviceToken?: string;
+  status?: WorkerStatus;
+  createdAt?: string;
+}
+
+export interface AuditLog {
+  id?: number;
+  workerId: number;
+  action: string;
+  fieldChanged?: string;
+  oldValue?: string;
+  newValue?: string;
+  changedBy: string;
   createdAt?: string;
 }
 
@@ -117,9 +131,21 @@ async function initDb(db: SQLite.SQLiteDatabase) {
     "ALTER TABLE attendance ADD COLUMN plazaId TEXT DEFAULT ''",
     "ALTER TABLE attendance ADD COLUMN operatorId TEXT DEFAULT ''",
     "ALTER TABLE attendance ADD COLUMN deviceToken TEXT DEFAULT ''",
+    "ALTER TABLE workers ADD COLUMN status TEXT DEFAULT 'active'",
+    `CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workerId INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      fieldChanged TEXT,
+      oldValue TEXT,
+      newValue TEXT,
+      changedBy TEXT NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workerId) REFERENCES workers(id)
+    )`,
   ];
   for (const sql of migrations) {
-    try { await db.execAsync(sql); } catch { /* column already exists */ }
+    try { await db.execAsync(sql); } catch { /* column/table already exists */ }
   }
 
   await seedDummyData(db);
@@ -259,6 +285,117 @@ export async function getAppSetting(key: string): Promise<string | null> {
 export async function setAppSetting(key: string, value: string): Promise<void> {
   const db = await getDb();
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", [key, value]);
+}
+
+export async function getWorkerAttendance(workerId: number): Promise<AttendanceRecord[]> {
+  const db = await getDb();
+  return db.getAllAsync<AttendanceRecord>(
+    `SELECT a.*, w.fullName as workerName, w.workerId as workerIdCode
+     FROM attendance a
+     LEFT JOIN workers w ON a.workerId = w.id
+     WHERE a.workerId = ?
+     ORDER BY a.date DESC, a.time DESC`,
+    [workerId]
+  );
+}
+
+export async function getWorkersByPlaza(plazaId: string, status?: WorkerStatus): Promise<Worker[]> {
+  const db = await getDb();
+  if (status) {
+    return db.getAllAsync<Worker>(
+      "SELECT * FROM workers WHERE plazaId = ? AND status = ? ORDER BY fullName ASC",
+      [plazaId, status]
+    );
+  }
+  return db.getAllAsync<Worker>(
+    "SELECT * FROM workers WHERE plazaId = ? ORDER BY fullName ASC",
+    [plazaId]
+  );
+}
+
+export async function getWorkerFaceImageCount(workerId: number): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ cnt: number }>(
+    "SELECT COUNT(*) as cnt FROM face_images WHERE workerId = ? AND captured = 1",
+    [workerId]
+  );
+  return row?.cnt ?? 0;
+}
+
+export async function updateWorker(
+  id: number,
+  fields: Partial<Pick<Worker, "fullName" | "mobile" | "department" | "contractorName" | "employeeType" | "siteLocation">>,
+  changedBy: string
+): Promise<void> {
+  const db = await getDb();
+  const original = await db.getFirstAsync<Worker>("SELECT * FROM workers WHERE id = ?", [id]);
+  if (!original) throw new Error("Worker not found");
+
+  const updates: string[] = [];
+  const values: (string | number)[] = [];
+  const fieldMap: Record<string, string> = {
+    fullName: "fullName", mobile: "mobile", department: "department",
+    contractorName: "contractorName", employeeType: "employeeType", siteLocation: "siteLocation",
+  };
+  for (const [key, col] of Object.entries(fieldMap)) {
+    const k = key as keyof typeof fields;
+    if (fields[k] !== undefined && fields[k] !== (original as Record<string, unknown>)[key]) {
+      updates.push(`${col} = ?`);
+      values.push(fields[k] as string);
+      await addAuditLog({
+        workerId: id, action: "update_field", fieldChanged: key,
+        oldValue: String((original as Record<string, unknown>)[key] ?? ""),
+        newValue: String(fields[k]),
+        changedBy,
+      });
+    }
+  }
+  if (updates.length === 0) return;
+  values.push(id);
+  await db.runAsync(`UPDATE workers SET ${updates.join(", ")} WHERE id = ?`, values);
+}
+
+export async function setWorkerStatus(id: number, status: WorkerStatus, changedBy: string): Promise<void> {
+  const db = await getDb();
+  const original = await db.getFirstAsync<Worker>("SELECT status FROM workers WHERE id = ?", [id]);
+  const oldStatus = original?.status ?? "active";
+  await db.runAsync("UPDATE workers SET status = ? WHERE id = ?", [status, id]);
+  await addAuditLog({
+    workerId: id, action: "status_change", fieldChanged: "status",
+    oldValue: oldStatus, newValue: status, changedBy,
+  });
+}
+
+export async function addAuditLog(entry: Omit<AuditLog, "id" | "createdAt">): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    "INSERT INTO audit_log (workerId, action, fieldChanged, oldValue, newValue, changedBy) VALUES (?,?,?,?,?,?)",
+    [entry.workerId, entry.action, entry.fieldChanged ?? "", entry.oldValue ?? "", entry.newValue ?? "", entry.changedBy]
+  );
+}
+
+export async function getWorkerAuditLogs(workerId: number): Promise<AuditLog[]> {
+  const db = await getDb();
+  return db.getAllAsync<AuditLog>(
+    "SELECT * FROM audit_log WHERE workerId = ? ORDER BY createdAt DESC LIMIT 50",
+    [workerId]
+  );
+}
+
+export async function getWorkerAttendanceStats(workerId: number): Promise<{ present: number; absent: number; total: number; rate: number }> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ status: string; cnt: number }>(
+    "SELECT status, COUNT(*) as cnt FROM attendance WHERE workerId = ? GROUP BY status",
+    [workerId]
+  );
+  let present = 0; let absent = 0;
+  for (const r of rows) {
+    if (r.status === "present") present = r.cnt;
+    else if (r.status === "absent") absent = r.cnt;
+  }
+  const total = present + absent;
+  const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+  return { present, absent, total, rate };
 }
 
 export async function getAttendanceStats(): Promise<{ total: number; present: number; absent: number; pending: number }> {

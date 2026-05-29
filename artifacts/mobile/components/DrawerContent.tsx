@@ -29,6 +29,7 @@ const sharedItems: NavItem[] = [
 ];
 
 const operatorItems: NavItem[] = [
+  { label: "Worker Directory", icon: "people-outline", route: "/worker-directory" },
   { label: "Register Worker", icon: "person-add-outline", route: "/register-worker" },
   { label: "Mark Attendance", icon: "scan-outline", route: "/attendance" },
   { label: "Attendance History", icon: "calendar-outline", route: "/attendance-history" },

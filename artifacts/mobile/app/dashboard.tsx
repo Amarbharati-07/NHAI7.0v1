@@ -24,6 +24,7 @@ import { useColors } from "@/hooks/useColors";
 interface Stats { total: number; present: number; absent: number; pending: number }
 
 const OPERATOR_QUICK_ACTIONS = [
+  { label: "Worker Directory", icon: "people-outline" as const, color: "#0B5EA8", route: "/worker-directory" },
   { label: "Register Worker", icon: "person-add-outline" as const, color: "#F97316", route: "/register-worker" },
   { label: "Mark Attendance", icon: "scan-outline" as const, color: "#EA580C", route: "/attendance" },
   { label: "Attendance History", icon: "calendar-outline" as const, color: "#0B7ED4", route: "/attendance-history" },
