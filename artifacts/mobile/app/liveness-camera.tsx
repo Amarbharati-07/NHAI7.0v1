@@ -36,6 +36,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
+import * as LivenessService from "@/services/LivenessService";
+import type { LivenessStep } from "@/services/LivenessService";
 
 const STEPS = [
   {
@@ -89,6 +91,10 @@ export default function LivenessCameraScreen() {
   const [stepIndex, setStepIndex] = useState(0);
   const [phase, setPhase] = useState<StepPhase>("ready");
   const [completed, setCompleted] = useState<boolean[]>([false, false, false, false]);
+  const [modelReady, setModelReady] = useState(false);
+
+  const cameraRef  = useRef<any>(null);
+  const sessionRef = useRef<{ stop: () => void } | null>(null);
 
   /* Animations */
   const pulseScale  = useSharedValue(1);
@@ -142,12 +148,44 @@ export default function LivenessCameraScreen() {
     opacity: checkOpac.value,
   }));
 
-  /* ── Request permission on mount ── */
+  /* ── Request permission on mount + init liveness model ── */
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
       requestPermission();
     }
+    if (Platform.OS !== "web") {
+      LivenessService.initModel()
+        .then(() => setModelReady(true))
+        .catch((err) => console.warn("[Liveness] Model load failed:", err));
+    }
+    return () => {
+      sessionRef.current?.stop();
+    };
   }, []);
+
+  /* ── Detection session — start when detecting, stop otherwise ── */
+  useEffect(() => {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+
+    if (phase !== "detecting") return;
+    if (!modelReady || !cameraRef.current || Platform.OS === "web") return;
+
+    const stepKey = STEPS[stepIndex]?.key as LivenessStep | undefined;
+    if (!stepKey) return;
+
+    sessionRef.current = LivenessService.startDetecting(
+      stepKey,
+      cameraRef,
+      handleConfirm,
+      () => { /* timeout — manual confirm button stays visible as fallback */ }
+    );
+
+    return () => {
+      sessionRef.current?.stop();
+      sessionRef.current = null;
+    };
+  }, [phase, stepIndex, modelReady]);
 
   /* ── Start detecting ── */
   const handleStart = () => {
@@ -155,7 +193,7 @@ export default function LivenessCameraScreen() {
     setPhase("detecting");
   };
 
-  /* ── Manual confirm (AI extension point) ── */
+  /* ── Manual confirm (also called by AI detection session) ── */
   const handleConfirm = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setPhase("confirmed");
@@ -235,6 +273,7 @@ export default function LivenessCameraScreen() {
 
       {/* ── Live camera feed ── */}
       <CameraView
+        ref={cameraRef}
         style={StyleSheet.absoluteFill}
         facing="front"
         active

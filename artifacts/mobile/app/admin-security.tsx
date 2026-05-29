@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Platform,
@@ -14,7 +14,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
-import { MOCK_SECURITY_EVENTS, MOCK_AUDIT_LOGS, MOCK_DEVICES, SecurityEvent, AuditLog } from "@/services/adminData";
+import type { SecurityEvent, AuditLog } from "@/services/adminData";
+import * as adminStore from "@/services/adminStore";
+import { useAdminData } from "@/contexts/AdminDataContext";
 import { useColors } from "@/hooks/useColors";
 
 type TabType = "alerts" | "audit" | "blocked" | "activity";
@@ -105,15 +107,34 @@ export default function AdminSecurityScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabType>("alerts");
-  const [events, setEvents] = useState(MOCK_SECURITY_EVENTS);
+  const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { devices } = useAdminData();
 
-  const handleResolve = (id: string) => {
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const [evts, logs] = await Promise.all([
+        adminStore.getSecurityEvents(),
+        adminStore.getAuditLogs(),
+      ]);
+      if (!mounted) return;
+      setEvents(evts);
+      setAuditLogs(logs);
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const handleResolve = useCallback(async (id: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setEvents((prev) => prev.map((e) => e.id === id ? { ...e, resolved: true } : e));
-  };
+    await adminStore.resolveSecurityEvent(id);
+  }, []);
 
   const unresolved = events.filter((e) => !e.resolved).length;
-  const blockedDevices = MOCK_DEVICES.filter((d) => d.status === "blocked");
+  const blockedDevices = devices.filter((d) => d.status === "blocked");
 
   const operatorActivity = [
     { operator: "Rajan Mehta", action: "Marked attendance for 32 workers", time: "Today 08:15 AM", color: colors.success },
@@ -145,7 +166,7 @@ export default function AdminSecurityScreen() {
               { label: "Total Alerts", val: events.length, color: colors.warning, icon: "warning-outline" as const },
               { label: "Unresolved", val: unresolved, color: colors.destructive, icon: "alert-circle-outline" as const },
               { label: "Blocked Devices", val: blockedDevices.length, color: colors.destructive, icon: "ban-outline" as const },
-              { label: "Audit Logs", val: MOCK_AUDIT_LOGS.length, color: colors.accent, icon: "document-text-outline" as const },
+              { label: "Audit Logs", val: auditLogs.length, color: colors.accent, icon: "document-text-outline" as const },
             ].map((k, i) => (
               <View key={i} style={[styles.kpiCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 <View style={[styles.kpiIcon, { backgroundColor: k.color + "22" }]}>
@@ -199,7 +220,7 @@ export default function AdminSecurityScreen() {
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>System Audit Log</Text>
               </View>
               <View style={[styles.auditTimeline, { borderLeftColor: colors.border }]}>
-                {MOCK_AUDIT_LOGS.map((log) => <AuditRow key={log.id} log={log} />)}
+                {auditLogs.map((log) => <AuditRow key={log.id} log={log} />)}
               </View>
             </View>
           )}
@@ -217,12 +238,12 @@ export default function AdminSecurityScreen() {
                   <View key={device.id} style={[styles.blockedCard, { backgroundColor: colors.card, borderColor: colors.destructive + "44", borderRadius: colors.radius }]}>
                     <View style={styles.blockedHeader}>
                       <View style={[styles.deviceIcon, { backgroundColor: colors.destructive + "18" }]}>
-                        <Ionicons name={device.deviceType === "ios" ? "logo-apple" : "logo-android"} size={22} color={colors.destructive} />
+                        <Ionicons name={device.platform === "ios" ? "logo-apple" : "logo-android"} size={22} color={colors.destructive} />
                       </View>
                       <View style={{ flex: 1, gap: 3 }}>
                         <Text style={[styles.deviceModel, { color: colors.foreground }]}>{device.deviceModel}</Text>
-                        <Text style={[styles.deviceImei, { color: colors.textMuted }]}>IMEI: {device.imei.slice(0, 8)}••••{device.imei.slice(-4)}</Text>
-                        <Text style={[styles.deviceAttempts, { color: colors.destructive }]}>{device.unauthorizedAttempts} unauthorized attempts</Text>
+                        <Text style={[styles.deviceImei, { color: colors.textMuted }]}>IMEI: {device.imeiNumber.slice(0, 8)}••••{device.imeiNumber.slice(-4)}</Text>
+                        <Text style={[styles.deviceAttempts, { color: colors.destructive }]}>Blocked • last seen {device.lastActiveTime}</Text>
                       </View>
                       <View style={[styles.blockedBadge, { backgroundColor: colors.destructive + "22" }]}>
                         <Ionicons name="ban" size={12} color={colors.destructive} />
@@ -237,7 +258,7 @@ export default function AdminSecurityScreen() {
                         <Ionicons name="checkmark-outline" size={14} color={colors.success} />
                         <Text style={[styles.resolveBtnText, { color: colors.success }]}>Unblock</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[styles.resolveBtn, { backgroundColor: colors.primary + "18" }]} onPress={() => Alert.alert("Device Details", `Last active: ${device.lastActive}`)}>
+                      <TouchableOpacity style={[styles.resolveBtn, { backgroundColor: colors.primary + "18" }]} onPress={() => Alert.alert("Device Details", `Last active: ${device.lastActiveTime}`)}>
                         <Ionicons name="information-circle-outline" size={14} color={colors.accent} />
                         <Text style={[styles.resolveBtnText, { color: colors.accent }]}>Details</Text>
                       </TouchableOpacity>

@@ -23,9 +23,14 @@ export interface SyncResult {
 type SyncListener = (state: SyncState) => void;
 
 function getApiBaseUrl(): string {
+  if (process.env["EXPO_PUBLIC_API_URL"]) return process.env["EXPO_PUBLIC_API_URL"]!;
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
   if (domain) return `https://${domain}:3000/api`;
   return "http://localhost:3000/api";
+}
+
+export function getApiBase(): string {
+  return getApiBaseUrl();
 }
 
 class SyncService {

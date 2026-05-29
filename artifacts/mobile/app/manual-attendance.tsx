@@ -34,10 +34,50 @@ interface WorkerWithMark extends Worker {
   markStatus?: MarkStatus;
 }
 
+function AdminOnlyGate({ onGoToFaceScan }: { onGoToFaceScan: () => void }) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background, alignItems: "center", justifyContent: "center", padding: 32, paddingTop: insets.top + 16 }}>
+      <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.warning + "22", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+        <Ionicons name="lock-closed-outline" size={36} color={colors.warning} />
+      </View>
+      <Text style={{ color: colors.foreground, fontSize: 20, fontWeight: "800", textAlign: "center", marginBottom: 8 }}>
+        Admin Access Only
+      </Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center", lineHeight: 20, marginBottom: 28 }}>
+        Manual attendance override requires admin privileges. All attendance must be recorded through face recognition to ensure accuracy and prevent fraud.
+      </Text>
+      <TouchableOpacity
+        style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.primary, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 14 }}
+        onPress={onGoToFaceScan}
+        activeOpacity={0.85}
+      >
+        <MaterialCommunityIcons name="face-recognition" size={20} color="#fff" />
+        <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>Use Face Scan Instead</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={{ marginTop: 12, padding: 12 }} onPress={() => router.back()}>
+        <Text style={{ color: colors.textMuted, fontSize: 14 }}>Go Back</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function ManualAttendanceScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+
+  if (user?.role !== "admin") {
+    return (
+      <DrawerOverlay>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <AppHeader title="Manual Attendance" showBack onBack={() => router.back()} />
+          <AdminOnlyGate onGoToFaceScan={() => router.replace("/attendance" as never)} />
+        </View>
+      </DrawerOverlay>
+    );
+  }
 
   const [workers, setWorkers]         = useState<WorkerWithMark[]>([]);
   const [loading, setLoading]         = useState(true);

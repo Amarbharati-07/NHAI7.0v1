@@ -55,6 +55,17 @@ export interface FaceImage {
   createdAt?: string;
 }
 
+export interface FaceEmbedding {
+  id?: number;
+  workerId: number;
+  workerIdCode: string;
+  workerName?: string;
+  embedding: string;
+  pose?: string;
+  modelVersion?: string;
+  createdAt?: string;
+}
+
 export interface SyncRecord {
   id?: number;
   recordType: string;
@@ -73,6 +84,7 @@ interface WebStore {
   workers: (Worker & { id: number })[];
   attendance: (AttendanceRecord & { id: number })[];
   faceImages: (FaceImage & { id: number })[];
+  faceEmbeddings: (FaceEmbedding & { id: number })[];
   syncQueue: (SyncRecord & { id: number })[];
   auditLog: (AuditLog & { id: number })[];
   settings: Record<string, string>;
@@ -83,13 +95,14 @@ const webStore: WebStore = {
   workers: [],
   attendance: [],
   faceImages: [],
+  faceEmbeddings: [],
   syncQueue: [],
   auditLog: [],
   settings: { darkMode: "false" },
   seeded: false,
 };
 
-let webStoreNextId = { workers: 1, attendance: 1, faceImages: 1, syncQueue: 1, auditLog: 1 };
+let webStoreNextId = { workers: 1, attendance: 1, faceImages: 1, faceEmbeddings: 1, syncQueue: 1, auditLog: 1 };
 
 function nowIso(): string { return new Date().toISOString(); }
 function todayStr(): string { return new Date().toISOString().split("T")[0]; }
@@ -217,6 +230,24 @@ async function web_getWorkerFaceImageCount(workerId: number): Promise<number> {
 
 async function web_saveFaceImage(entry: Omit<FaceImage, "id" | "createdAt">): Promise<void> {
   webStore.faceImages.push({ ...entry, id: webStoreNextId.faceImages++, createdAt: nowIso() });
+}
+
+async function web_saveFaceEmbedding(entry: Omit<FaceEmbedding, "id" | "createdAt">): Promise<void> {
+  webStore.faceEmbeddings.push({ ...entry, id: webStoreNextId.faceEmbeddings++, createdAt: nowIso() });
+}
+
+async function web_getFaceEmbeddings(workerId?: number): Promise<(FaceEmbedding & { workerName?: string })[]> {
+  const embs = workerId !== undefined
+    ? webStore.faceEmbeddings.filter((e) => e.workerId === workerId)
+    : webStore.faceEmbeddings;
+  return embs.map((e) => ({
+    ...e,
+    workerName: webStore.workers.find((w) => w.id === e.workerId)?.fullName ?? e.workerIdCode,
+  }));
+}
+
+async function web_deleteFaceEmbeddings(workerId: number): Promise<void> {
+  webStore.faceEmbeddings = webStore.faceEmbeddings.filter((e) => e.workerId !== workerId);
 }
 
 async function web_updateWorker(id: number, fields: Parameters<typeof updateWorker>[1], changedBy: string): Promise<void> {
@@ -401,6 +432,16 @@ async function initDb(db: import("expo-sqlite").SQLiteDatabase) {
       oldValue TEXT,
       newValue TEXT,
       changedBy TEXT NOT NULL,
+      createdAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (workerId) REFERENCES workers(id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS face_embeddings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workerId INTEGER NOT NULL,
+      workerIdCode TEXT NOT NULL,
+      embedding TEXT NOT NULL,
+      pose TEXT DEFAULT 'front',
+      modelVersion TEXT DEFAULT '1.0',
       createdAt TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (workerId) REFERENCES workers(id)
     )`,
@@ -631,6 +672,35 @@ export async function saveFaceImage(entry: Omit<FaceImage, "id" | "createdAt">):
     "INSERT INTO face_images (workerId, imageType, imagePath, captured) VALUES (?, ?, ?, ?)",
     [entry.workerId, entry.imageType, entry.imagePath ?? null, entry.captured ? 1 : 0]
   );
+}
+
+export async function saveFaceEmbedding(entry: Omit<FaceEmbedding, "id" | "createdAt">): Promise<void> {
+  if (IS_WEB) return web_saveFaceEmbedding(entry);
+  const db = await getDb();
+  await db.runAsync(
+    "INSERT INTO face_embeddings (workerId, workerIdCode, embedding, pose) VALUES (?,?,?,?)",
+    [entry.workerId, entry.workerIdCode, entry.embedding, entry.pose ?? "front"]
+  );
+}
+
+export async function getFaceEmbeddings(workerId?: number): Promise<(FaceEmbedding & { workerName?: string })[]> {
+  if (IS_WEB) return web_getFaceEmbeddings(workerId);
+  const db = await getDb();
+  if (workerId !== undefined) {
+    return db.getAllAsync<FaceEmbedding & { workerName?: string }>(
+      `SELECT fe.*, w.fullName as workerName FROM face_embeddings fe LEFT JOIN workers w ON fe.workerId = w.id WHERE fe.workerId = ?`,
+      [workerId]
+    );
+  }
+  return db.getAllAsync<FaceEmbedding & { workerName?: string }>(
+    `SELECT fe.*, w.fullName as workerName FROM face_embeddings fe LEFT JOIN workers w ON fe.workerId = w.id ORDER BY fe.createdAt DESC`
+  );
+}
+
+export async function deleteFaceEmbeddings(workerId: number): Promise<void> {
+  if (IS_WEB) return web_deleteFaceEmbeddings(workerId);
+  const db = await getDb();
+  await db.runAsync("DELETE FROM face_embeddings WHERE workerId = ?", [workerId]);
 }
 
 export async function updateWorker(
