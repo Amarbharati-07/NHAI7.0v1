@@ -242,7 +242,7 @@ function AllocationCard({
           { icon: "phone-portrait-outline" as const,  label: "Device",     value: `${alloc.deviceId} · ${alloc.deviceName}` },
           { icon: "hardware-chip-outline" as const,   label: "Model",      value: alloc.deviceModel },
           { icon: "calendar-outline" as const,        label: "Allocated",  value: alloc.allocatedAt },
-          { icon: "key-outline" as const,             label: "Token",      value: alloc.deviceToken.slice(0, 20) + "…" },
+          { icon: "key-outline" as const,             label: "Token",      value: alloc.deviceToken ? alloc.deviceToken.slice(0, 20) + "…" : "N/A" },
           { icon: "person-outline" as const,          label: "By Admin",   value: alloc.allocatedBy },
         ].map(({ icon, label, value }) => (
           <View key={label} style={ac.detailItem}>
