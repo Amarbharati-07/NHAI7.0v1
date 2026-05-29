@@ -41,7 +41,6 @@ const adminItems: NavItem[] = [
   { label: "Toll Plaza Management", icon: "business", route: "/admin-toll-plazas" },
   { label: "Operator Management", icon: "supervisor-account", route: "/admin-operators" },
   { label: "Device Allocation", icon: "smartphone", route: "/admin-devices" },
-  { label: "Worker Management", icon: "settings", route: "/admin-workers" },
   { label: "Attendance Monitor", icon: "monitor", route: "/admin-attendance" },
   { label: "Security Center", icon: "security", route: "/admin-security", badge: "2", badgeColor: "#EF4444" },
   { label: "Reports & Analytics", icon: "analytics", route: "/reports" },
