@@ -62,6 +62,13 @@ export default function RootLayout() {
                     <Stack.Screen name="sync-center" />
                     <Stack.Screen name="reports" />
                     <Stack.Screen name="settings" />
+                    {/* Admin screens */}
+                    <Stack.Screen name="admin-toll-plazas" />
+                    <Stack.Screen name="admin-devices" />
+                    <Stack.Screen name="admin-operators" />
+                    <Stack.Screen name="admin-workers" />
+                    <Stack.Screen name="admin-security" />
+                    <Stack.Screen name="admin-attendance" />
                   </Stack>
                 </KeyboardProvider>
               </GestureHandlerRootView>
