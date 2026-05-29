@@ -56,6 +56,7 @@ export default function RootLayout() {
               <GestureHandlerRootView style={{ flex: 1 }}>
                 <KeyboardProvider>
                   <Stack screenOptions={{ headerShown: false }}>
+                    <Stack.Screen name="index" options={{ animation: "none" }} />
                     <Stack.Screen name="(tabs)" />
                     <Stack.Screen name="login" />
                     <Stack.Screen name="dashboard" />
