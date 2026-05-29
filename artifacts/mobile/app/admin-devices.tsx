@@ -317,7 +317,8 @@ export default function AdminDevicesScreen() {
   const [regPlatform,    setRegPlatform]    = useState<DevicePlatform>("android");
   const [regToken,       setRegToken]       = useState("");
   const [regAppToken,    setRegAppToken]    = useState("");
-  const [useCurrentDev,  setUseCurrentDev]  = useState(true);
+  const [useCurrentDev,  setUseCurrentDev]  = useState(false);
+  const [tokenGenMsg,    setTokenGenMsg]    = useState("");  // Inline confirmation for token gen
   const [previewDevId,   setPreviewDevId]   = useState(""); // Preview of auto-generated ID
   const [regPlazaId,     setRegPlazaId]     = useState("");
 
@@ -350,7 +351,7 @@ export default function AdminDevicesScreen() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  /* Refresh registration token previews when modal opens */
+  /* Open registration modal — tokens start empty until user explicitly opts in */
   const openRegModal = async () => {
     const existingDevices = await getRegisteredDevices();
     const nums = existingDevices
@@ -363,14 +364,11 @@ export default function AdminDevicesScreen() {
     setRegPlatform(platform);
     setRegOsVersion(getDefaultOsVersion(platform));
 
-    let tok: string;
-    if (useCurrentDev) {
-      tok = await getOrCreateDeviceToken();
-    } else {
-      tok = generateDeviceToken(platform);
-    }
-    setRegToken(tok);
-    setRegAppToken(generateAppToken());
+    /* Reset everything — tokens remain empty until checkbox is checked */
+    setUseCurrentDev(false);
+    setRegToken("");
+    setRegAppToken("");
+    setTokenGenMsg("");
     setRegName("");
     setRegModel("");
     setRegImei("");
@@ -379,14 +377,15 @@ export default function AdminDevicesScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
+  /* Regenerate tokens — only callable when checkbox is already checked */
   const refreshTokens = async () => {
-    if (useCurrentDev) {
-      const tok = await getOrCreateDeviceToken();
-      setRegToken(tok);
-    } else {
-      setRegToken(generateDeviceToken(regPlatform));
-    }
+    if (!useCurrentDev) return;
+    const tok = await getOrCreateDeviceToken();
+    setRegToken(tok);
     setRegAppToken(generateAppToken());
+    setTokenGenMsg("Tokens regenerated successfully.");
+    setTimeout(() => setTokenGenMsg(""), 3000);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   /* ── Register Device ── */
@@ -788,7 +787,10 @@ export default function AdminDevicesScreen() {
                       onPress={() => {
                         setRegPlatform(p);
                         setRegOsVersion(getDefaultOsVersion(p));
-                        if (!useCurrentDev) setRegToken(generateDeviceToken(p));
+                        /* Only update token if checkbox is active — never auto-generate */
+                        if (useCurrentDev && regToken) {
+                          setRegToken(generateDeviceToken(p));
+                        }
                       }}
                     >
                       <Ionicons name={p === "ios" ? "logo-apple" : p === "android" ? "logo-android" : "globe-outline"} size={14} color={regPlatform === p ? "#fff" : colors.textSecondary} />
@@ -815,38 +817,94 @@ export default function AdminDevicesScreen() {
               {/* Device Token */}
               <View style={st.field}>
                 <View style={st.fieldLabelRow}>
-                  <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Device Token (auto-generated)</Text>
-                  <TouchableOpacity onPress={refreshTokens}>
-                    <Ionicons name="refresh-outline" size={15} color={colors.accent} />
+                  <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Device Token</Text>
+                  <TouchableOpacity
+                    onPress={refreshTokens}
+                    disabled={!useCurrentDev}
+                    style={{ opacity: useCurrentDev ? 1 : 0.3 }}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color={useCurrentDev ? colors.accent : colors.textMuted} />
                   </TouchableOpacity>
                 </View>
+
+                {/* Checkbox — explicit opt-in required */}
                 <TouchableOpacity
-                  style={[st.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                  style={[st.toggleRow, {
+                    backgroundColor: useCurrentDev ? colors.primary + "12" : colors.surface,
+                    borderColor: useCurrentDev ? colors.primary + "55" : colors.border,
+                  }]}
                   onPress={async () => {
                     const next = !useCurrentDev;
                     setUseCurrentDev(next);
                     if (next) {
-                      setRegToken(await getOrCreateDeviceToken());
+                      /* ── Generate tokens only when user explicitly opts in ── */
+                      const tok = await getOrCreateDeviceToken();
+                      setRegToken(tok);
+                      setRegAppToken(generateAppToken());
+                      setTokenGenMsg("Device Token and App Security Token generated.");
+                      setTimeout(() => setTokenGenMsg(""), 4000);
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                     } else {
-                      setRegToken(generateDeviceToken(regPlatform));
+                      /* ── Clear tokens when user unchecks ── */
+                      setRegToken("");
+                      setRegAppToken("");
+                      setTokenGenMsg("");
                     }
                   }}
                 >
-                  <Ionicons name={useCurrentDev ? "checkbox" : "square-outline"} size={20} color={colors.primary} />
-                  <Text style={[st.toggleText, { color: colors.foreground }]}>Use this device's token (recommended)</Text>
+                  <Ionicons
+                    name={useCurrentDev ? "checkbox" : "square-outline"}
+                    size={20}
+                    color={useCurrentDev ? colors.primary : colors.textMuted}
+                  />
+                  <Text style={[st.toggleText, { color: useCurrentDev ? colors.primary : colors.foreground, fontWeight: useCurrentDev ? "600" : "400" }]}>
+                    Use this device's token (recommended)
+                  </Text>
                 </TouchableOpacity>
-                <View style={[st.tokenBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="key-outline" size={14} color={colors.textMuted} />
-                  <Text style={[st.tokenText, { color: colors.foreground }]} numberOfLines={1} selectable>{regToken}</Text>
+
+                {/* Token generation confirmation */}
+                {tokenGenMsg !== "" && (
+                  <View style={[st.tokenGenBanner, { backgroundColor: colors.success + "15", borderColor: colors.success + "44" }]}>
+                    <Ionicons name="checkmark-circle-outline" size={14} color={colors.success} />
+                    <Text style={[st.tokenGenText, { color: colors.success }]}>{tokenGenMsg}</Text>
+                  </View>
+                )}
+
+                {/* Device Token field */}
+                <View style={[st.tokenBox, {
+                  backgroundColor: useCurrentDev ? colors.surface : colors.muted,
+                  borderColor: useCurrentDev ? colors.border : colors.border,
+                  opacity: useCurrentDev ? 1 : 0.45,
+                }]}>
+                  <Ionicons name="key-outline" size={14} color={useCurrentDev ? colors.textMuted : colors.textMuted} />
+                  {useCurrentDev && regToken ? (
+                    <Text style={[st.tokenText, { color: colors.foreground }]} numberOfLines={1} selectable>{regToken}</Text>
+                  ) : (
+                    <Text style={[st.tokenText, { color: colors.textMuted }]} numberOfLines={1}>
+                      {useCurrentDev ? "Generating…" : "Check the box above to generate"}
+                    </Text>
+                  )}
                 </View>
               </View>
 
-              {/* App Token */}
+              {/* App Security Token */}
               <View style={st.field}>
-                <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>App Security Token (auto-generated)</Text>
-                <View style={[st.tokenBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Ionicons name="shield-checkmark-outline" size={14} color={colors.textMuted} />
-                  <Text style={[st.tokenText, { color: colors.foreground }]} numberOfLines={1} selectable>{regAppToken}</Text>
+                <Text style={[st.fieldLabel, { color: useCurrentDev ? colors.textSecondary : colors.textMuted }]}>
+                  App Security Token
+                </Text>
+                <View style={[st.tokenBox, {
+                  backgroundColor: useCurrentDev ? colors.surface : colors.muted,
+                  borderColor: colors.border,
+                  opacity: useCurrentDev ? 1 : 0.45,
+                }]}>
+                  <Ionicons name="shield-checkmark-outline" size={14} color={useCurrentDev ? colors.textMuted : colors.textMuted} />
+                  {useCurrentDev && regAppToken ? (
+                    <Text style={[st.tokenText, { color: colors.foreground }]} numberOfLines={1} selectable>{regAppToken}</Text>
+                  ) : (
+                    <Text style={[st.tokenText, { color: colors.textMuted }]} numberOfLines={1}>
+                      {useCurrentDev ? "Generating…" : "Generated with device token"}
+                    </Text>
+                  )}
                 </View>
               </View>
 
@@ -887,9 +945,9 @@ export default function AdminDevicesScreen() {
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[st.confirmBtn, { backgroundColor: regName.trim() && regModel.trim() ? colors.accent : colors.muted }]}
+                style={[st.confirmBtn, { backgroundColor: regName.trim() && regModel.trim() && regToken && regAppToken ? colors.accent : colors.muted }]}
                 onPress={handleRegisterDevice}
-                disabled={saving || !regName.trim() || !regModel.trim()}
+                disabled={saving || !regName.trim() || !regModel.trim() || !regToken || !regAppToken}
               >
                 {saving
                   ? <ActivityIndicator color="#fff" size="small" />
@@ -1211,6 +1269,8 @@ const st = StyleSheet.create({
   platformText: { fontSize: 13, fontWeight: "600" },
   toggleRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
   toggleText: { flex: 1, fontSize: 13 },
+  tokenGenBanner: { flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8 },
+  tokenGenText: { fontSize: 12, fontWeight: "600", flex: 1 },
   tokenBox: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 10, padding: 12 },
   tokenText: { flex: 1, fontSize: 12, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
   plazaChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 99, borderWidth: 1 },
