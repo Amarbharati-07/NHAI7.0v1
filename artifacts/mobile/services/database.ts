@@ -230,6 +230,16 @@ export async function getAttendanceRecords(): Promise<AttendanceRecord[]> {
   );
 }
 
+export async function getAttendanceHistory(): Promise<AttendanceRecord[]> {
+  const db = await getDb();
+  return db.getAllAsync<AttendanceRecord>(
+    `SELECT a.*, w.fullName as workerName, w.workerId as workerIdCode
+     FROM attendance a
+     LEFT JOIN workers w ON a.workerId = w.id
+     ORDER BY a.date DESC, a.time DESC`
+  );
+}
+
 export async function getSyncQueue(): Promise<SyncRecord[]> {
   const db = await getDb();
   return db.getAllAsync<SyncRecord>("SELECT * FROM sync_queue WHERE status = 'pending' ORDER BY createdAt ASC");
