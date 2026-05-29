@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
+import { Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
@@ -261,7 +262,7 @@ export default function SettingsScreen() {
         URL.revokeObjectURL(url);
         toast(`Backup downloaded: ${filename}`);
       } else {
-        const path = `${FileSystem.documentDirectory}${filename}`;
+        const path = `${Paths.document.uri}${filename}`;
         await FileSystem.writeAsStringAsync(path, json, { encoding: FileSystem.EncodingType.UTF8 });
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) await Sharing.shareAsync(path, { mimeType: "application/json", dialogTitle: "Save Backup" });
@@ -349,7 +350,7 @@ export default function SettingsScreen() {
         URL.revokeObjectURL(url);
         toast(`Exported ${records.length} records to ${filename}`);
       } else {
-        const path = `${FileSystem.documentDirectory}${filename}`;
+        const path = `${Paths.document.uri}${filename}`;
         await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
@@ -693,7 +694,7 @@ export default function SettingsScreen() {
                   { k: "Connection",  v: isOnline ? "Online" : "Offline" },
                   { k: "Pending",     v: `${syncStats.pending} records` },
                   { k: "Last Sync",   v: lastSyncFormatted },
-                  { k: "Device Token", v: deviceInfo?.deviceToken?.slice(0, 16) + "…" ?? "—" },
+                  { k: "Device Token", v: deviceInfo?.deviceToken ? deviceInfo.deviceToken.slice(0, 16) + "…" : "—" },
                 ]},
               ].map(({ label, rows }) => (
                 <View key={label} style={{ marginTop: 16 }}>

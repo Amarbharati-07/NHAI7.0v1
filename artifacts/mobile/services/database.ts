@@ -322,6 +322,15 @@ export async function getWorkerFaceImageCount(workerId: number): Promise<number>
   return row?.cnt ?? 0;
 }
 
+export async function saveFaceImage(entry: Omit<FaceImage, "id" | "createdAt">): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO face_images (workerId, imageType, imagePath, captured)
+     VALUES (?, ?, ?, ?)`,
+    [entry.workerId, entry.imageType, entry.imagePath ?? null, entry.captured ? 1 : 0]
+  );
+}
+
 export async function updateWorker(
   id: number,
   fields: Partial<Pick<Worker, "fullName" | "mobile" | "department" | "contractorName" | "employeeType" | "siteLocation">>,

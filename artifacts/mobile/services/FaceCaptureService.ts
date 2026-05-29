@@ -8,6 +8,7 @@
  */
 
 import * as FileSystem from "expo-file-system";
+import { Paths } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 
 export type FacePose =
@@ -90,7 +91,7 @@ export async function captureImage(
 
   const asset = result.assets[0];
 
-  const dir = `${FileSystem.documentDirectory}spectra_faces/${sessionId}/`;
+  const dir = `${Paths.document.uri}spectra_faces/${sessionId}/`;
   await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
 
   const ext = asset.uri.split(".").pop() ?? "jpg";
@@ -159,7 +160,7 @@ export function isSessionComplete(sessionId: string): boolean {
  */
 export async function clearSession(sessionId: string): Promise<void> {
   const session = getSession(sessionId);
-  const dir = `${FileSystem.documentDirectory}spectra_faces/${sessionId}/`;
+  const dir = `${Paths.document.uri}spectra_faces/${sessionId}/`;
   try {
     await FileSystem.deleteAsync(dir, { idempotent: true });
   } catch {}
