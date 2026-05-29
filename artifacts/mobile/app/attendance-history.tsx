@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -27,6 +27,10 @@ export default function AttendanceHistoryScreen() {
   const [searchDate, setSearchDate] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
+  /* Stable refs so input fields never lose focus on re-renders */
+  const nameRef = useRef<TextInput>(null);
+  const dateRef = useRef<TextInput>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     const data = await getAttendanceHistory();
@@ -35,6 +39,10 @@ export default function AttendanceHistoryScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  /* Stable handlers */
+  const onChangeName = useCallback((t: string) => setSearchName(t), []);
+  const onChangeDate = useCallback((t: string) => setSearchDate(t), []);
 
   const filtered = records.filter((r) => {
     if (searchName && !r.workerName?.toLowerCase().includes(searchName.toLowerCase())) return false;
@@ -56,9 +64,7 @@ export default function AttendanceHistoryScreen() {
         <Text style={[styles.time, { color: colors.textMuted }]}>{item.time !== "00:00" ? item.time : "—"}</Text>
       </View>
       <View style={styles.right}>
-        <View style={[styles.pill, {
-          backgroundColor: item.status === "present" ? colors.successBg : colors.destructive + "22",
-        }]}>
+        <View style={[styles.pill, { backgroundColor: item.status === "present" ? colors.successBg : colors.destructive + "22" }]}>
           <Text style={[styles.pillText, { color: item.status === "present" ? colors.success : colors.destructive }]}>
             {item.status === "present" ? "Present" : "Absent"}
           </Text>
@@ -77,14 +83,17 @@ export default function AttendanceHistoryScreen() {
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Attendance History" showBack />
         <View style={[styles.filterArea, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          {/* Name search */}
           <View style={[styles.searchRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Ionicons name="search-outline" size={16} color={colors.textMuted} />
             <TextInput
+              ref={nameRef}
               style={[styles.searchInput, { color: colors.foreground }]}
               placeholder="Search by name…"
               placeholderTextColor={colors.mutedForeground}
               value={searchName}
-              onChangeText={setSearchName}
+              onChangeText={onChangeName}
+              returnKeyType="search"
             />
             {searchName ? (
               <TouchableOpacity onPress={() => setSearchName("")}>
@@ -92,14 +101,18 @@ export default function AttendanceHistoryScreen() {
               </TouchableOpacity>
             ) : null}
           </View>
+
+          {/* Date search */}
           <View style={[styles.searchRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Ionicons name="calendar-outline" size={16} color={colors.textMuted} />
             <TextInput
+              ref={dateRef}
               style={[styles.searchInput, { color: colors.foreground }]}
               placeholder="Filter by date (YYYY-MM-DD)…"
               placeholderTextColor={colors.mutedForeground}
               value={searchDate}
-              onChangeText={setSearchDate}
+              onChangeText={onChangeDate}
+              returnKeyType="search"
             />
             {searchDate ? (
               <TouchableOpacity onPress={() => setSearchDate("")}>
@@ -107,6 +120,8 @@ export default function AttendanceHistoryScreen() {
               </TouchableOpacity>
             ) : null}
           </View>
+
+          {/* Status tabs */}
           <View style={styles.statusTabs}>
             {(["all", "present", "absent"] as StatusFilter[]).map((s) => (
               <TouchableOpacity
@@ -124,9 +139,7 @@ export default function AttendanceHistoryScreen() {
         </View>
 
         {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={colors.primary} />
-          </View>
+          <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
         ) : (
           <FlatList
             data={filtered}
@@ -134,7 +147,7 @@ export default function AttendanceHistoryScreen() {
             renderItem={renderItem}
             contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
             showsVerticalScrollIndicator={false}
-            scrollEnabled={!!filtered.length}
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
               <View style={styles.empty}>
                 <Ionicons name="calendar-outline" size={48} color={colors.textMuted} />

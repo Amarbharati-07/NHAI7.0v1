@@ -1,10 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Dimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -24,8 +23,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 
-const { height: SCREEN_H } = Dimensions.get("window");
-
 export default function LoginScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -36,8 +33,20 @@ export default function LoginScreen() {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
   const passwordRef = useRef<TextInput>(null);
   const shakeX = useSharedValue(0);
+
+  /* Stable handlers — don't recreate on each render */
+  const onChangeUserId = useCallback((t: string) => {
+    setUserId(t);
+    setError("");
+  }, []);
+
+  const onChangePassword = useCallback((t: string) => {
+    setPassword(t);
+    setError("");
+  }, []);
 
   const shakeStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: shakeX.value }],
@@ -86,7 +95,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Logo area */}
+        {/* Logo */}
         <View style={styles.logoArea}>
           <View style={[styles.logoOuter, { borderColor: colors.primary + "44" }]}>
             <View style={[styles.logoInner, { backgroundColor: colors.primary + "22", borderColor: colors.primary + "66" }]}>
@@ -99,17 +108,13 @@ export default function LoginScreen() {
           <Text style={[styles.tagline, { color: colors.textSecondary }]}>
             Offline Facial Recognition & Attendance System
           </Text>
-
-          {/* Security badge */}
           <View style={[styles.securityBadge, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Ionicons name="shield-checkmark" size={14} color={colors.success} />
-            <Text style={[styles.securityText, { color: colors.textSecondary }]}>
-              Government-Grade Secure System
-            </Text>
+            <Text style={[styles.securityText, { color: colors.textSecondary }]}>Government-Grade Secure System</Text>
           </View>
         </View>
 
-        {/* Login Card */}
+        {/* Card */}
         <Animated.View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }, shakeStyle]}>
           <Text style={[styles.cardTitle, { color: colors.foreground }]}>System Login</Text>
           <Text style={[styles.cardSub, { color: colors.textSecondary }]}>Admin-created accounts only</Text>
@@ -117,17 +122,18 @@ export default function LoginScreen() {
           {/* User ID */}
           <View style={styles.fieldGroup}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>User ID</Text>
-            <View style={[styles.inputWrap, { backgroundColor: colors.surface, borderColor: error && !userId ? colors.destructive : colors.border }]}>
+            <View style={[styles.inputWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Ionicons name="person-outline" size={18} color={colors.accent} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: colors.foreground }]}
                 placeholder="Enter your User ID"
                 placeholderTextColor={colors.mutedForeground}
                 value={userId}
-                onChangeText={(t) => { setUserId(t); setError(""); }}
+                onChangeText={onChangeUserId}
                 autoCapitalize="characters"
                 returnKeyType="next"
                 onSubmitEditing={() => passwordRef.current?.focus()}
+                blurOnSubmit={false}
               />
             </View>
           </View>
@@ -135,7 +141,7 @@ export default function LoginScreen() {
           {/* Password */}
           <View style={styles.fieldGroup}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Password</Text>
-            <View style={[styles.inputWrap, { backgroundColor: colors.surface, borderColor: error && !password ? colors.destructive : colors.border }]}>
+            <View style={[styles.inputWrap, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Ionicons name="lock-closed-outline" size={18} color={colors.accent} style={styles.inputIcon} />
               <TextInput
                 ref={passwordRef}
@@ -143,7 +149,7 @@ export default function LoginScreen() {
                 placeholder="Enter your password"
                 placeholderTextColor={colors.mutedForeground}
                 value={password}
-                onChangeText={(t) => { setPassword(t); setError(""); }}
+                onChangeText={onChangePassword}
                 secureTextEntry={!showPw}
                 returnKeyType="done"
                 onSubmitEditing={handleLogin}
@@ -162,7 +168,7 @@ export default function LoginScreen() {
             </View>
           ) : null}
 
-          {/* Login Button */}
+          {/* Login button */}
           <TouchableOpacity
             style={[styles.loginBtn, { backgroundColor: loading ? colors.primaryDark : colors.primary, borderRadius: colors.radius }]}
             onPress={handleLogin}
@@ -186,11 +192,8 @@ export default function LoginScreen() {
           </View>
         </Animated.View>
 
-        {/* Footer */}
         <View style={styles.footer}>
-          <Text style={[styles.footerText, { color: colors.textMuted }]}>
-            SpectraID © 2025  •  All rights reserved
-          </Text>
+          <Text style={[styles.footerText, { color: colors.textMuted }]}>SpectraID © 2025  •  All rights reserved</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
