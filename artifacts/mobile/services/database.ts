@@ -483,13 +483,36 @@ export async function insertAttendance(
     plazaId?: string; operatorId?: string; deviceToken?: string;
   }
 ): Promise<number> {
-  if (IS_WEB) return web_insertAttendance(record);
+  if (IS_WEB) {
+    const id = await web_insertAttendance(record);
+    webStore.syncQueue.push({
+      id: webStoreNextId.syncQueue++,
+      recordType: "attendance",
+      recordId: id,
+      status: "pending",
+      createdAt: nowIso(),
+    });
+    return id;
+  }
   const db = await getDb();
   const result = await db.runAsync(
     "INSERT INTO attendance (workerId, date, time, status, syncStatus, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?)",
     [record.workerId, record.date, record.time, record.status ?? "present", record.syncStatus ?? "pending", record.plazaId ?? "", record.operatorId ?? "", record.deviceToken ?? ""]
   );
+  await db.runAsync(
+    "INSERT INTO sync_queue (recordType, recordId, status) VALUES (?, ?, ?)",
+    ["attendance", result.lastInsertRowId, "pending"]
+  );
   return result.lastInsertRowId;
+}
+
+export async function getWorkerByWorkerId(workerIdCode: string): Promise<Worker | null> {
+  if (IS_WEB) {
+    seedWebStore();
+    return webStore.workers.find((w) => w.workerId === workerIdCode) ?? null;
+  }
+  const db = await getDb();
+  return db.getFirstAsync<Worker>("SELECT * FROM workers WHERE workerId = ?", [workerIdCode]);
 }
 
 export async function getWorkers(): Promise<Worker[]> {

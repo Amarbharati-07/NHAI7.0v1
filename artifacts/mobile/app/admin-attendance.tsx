@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Platform,
   RefreshControl,
@@ -17,46 +18,129 @@ import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAdminData } from "@/contexts/AdminDataContext";
 import { getWeeklyAttendance } from "@/services/database";
+import { syncService } from "@/services/SyncService";
 import { useColors } from "@/hooks/useColors";
 
-type ViewTab = "live" | "trends" | "alerts" | "reports";
+type ViewTab = "live" | "trends" | "records" | "alerts" | "reports";
+
+interface AttendanceRecord {
+  id: number;
+  workerIdCode: string;
+  date: string;
+  time: string;
+  status: string;
+  plazaId: string;
+  operatorId: string;
+  createdAt: string;
+}
+
+interface ApiStats {
+  present: number;
+  absent: number;
+  total: number;
+  rate: number;
+}
 
 const MISSING_ALERTS = [
-  { worker: "Sunita Verma", id: "WRK004", plaza: "NH-48 Gurugram", days: 2, contact: "9876543213" },
-  { worker: "Mohan Lal", id: "WRK005", plaza: "NH-8 Manesar", days: 1, contact: "9876543214" },
-  { worker: "Vikram Yadav", id: "WRK010", plaza: "NH-44 Panipat", days: 3, contact: "9871234560" },
+  { worker: "Sunita Verma",  id: "WRK004", plaza: "NH-48 Gurugram", days: 2, contact: "9876543213" },
+  { worker: "Mohan Lal",     id: "WRK005", plaza: "NH-8 Manesar",   days: 1, contact: "9876543214" },
+  { worker: "Vikram Yadav",  id: "WRK010", plaza: "NH-44 Panipat",  days: 3, contact: "9871234560" },
 ];
 
 const REPORT_TYPES = [
-  { label: "Daily Report", icon: "today-outline" as const, color: "#3B82F6", desc: "Today's full attendance summary" },
-  { label: "Weekly Report", icon: "calendar-outline" as const, color: "#0B7ED4", desc: "Last 7 days attendance analysis" },
-  { label: "Monthly Report", icon: "bar-chart-outline" as const, color: "#10B981", desc: "Month-wise attendance breakdown" },
-  { label: "Custom Range", icon: "options-outline" as const, color: "#F59E0B", desc: "Select custom date range" },
-  { label: "Plaza-wise Report", icon: "business-outline" as const, color: "#EF4444", desc: "Individual plaza attendance" },
-  { label: "Worker Report", icon: "person-outline" as const, color: "#64748B", desc: "Per-worker attendance history" },
+  { label: "Daily Report",    icon: "today-outline"     as const, color: "#3B82F6", desc: "Today's full attendance summary" },
+  { label: "Weekly Report",   icon: "calendar-outline"  as const, color: "#0B7ED4", desc: "Last 7 days attendance analysis" },
+  { label: "Monthly Report",  icon: "bar-chart-outline" as const, color: "#10B981", desc: "Month-wise attendance breakdown" },
+  { label: "Custom Range",    icon: "options-outline"   as const, color: "#F59E0B", desc: "Select custom date range" },
+  { label: "Plaza-wise",      icon: "business-outline"  as const, color: "#EF4444", desc: "Individual plaza attendance" },
+  { label: "Worker Report",   icon: "person-outline"    as const, color: "#64748B", desc: "Per-worker attendance history" },
 ];
+
+function getApiBase(): string {
+  const domain = process.env["EXPO_PUBLIC_DOMAIN"];
+  if (domain) return `https://${domain}:3000/api`;
+  return "http://localhost:3000/api";
+}
 
 export default function AdminAttendanceScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<ViewTab>("live");
   const [refreshing, setRefreshing] = useState(false);
-  const [weeklyData, setWeeklyData] = useState<{ day: string; count: number }[]>([]);
+
+  const [weeklyData, setWeeklyData]       = useState<{ day: string; count: number }[]>([]);
+  const [apiStats, setApiStats]           = useState<ApiStats | null>(null);
+  const [apiRecords, setApiRecords]       = useState<AttendanceRecord[]>([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+  const [isOnline, setIsOnline]           = useState(syncService.getState().isOnline);
 
   const { plazas, refresh: refreshAdminData } = useAdminData();
 
-  const loadWeekly = useCallback(async () => {
+  useEffect(() => {
+    const unsub = syncService.subscribe((s) => setIsOnline(s.isOnline));
+    return () => unsub();
+  }, []);
+
+  const loadLocalWeekly = useCallback(async () => {
     const data = await getWeeklyAttendance();
     setWeeklyData(data);
   }, []);
 
-  useEffect(() => { loadWeekly(); }, [loadWeekly]);
+  const loadApiStats = useCallback(async () => {
+    if (!isOnline) return;
+    try {
+      const resp = await fetch(`${getApiBase()}/attendance/stats`);
+      if (resp.ok) setApiStats(await resp.json());
+    } catch {}
+  }, [isOnline]);
+
+  const loadApiWeekly = useCallback(async () => {
+    if (!isOnline) return;
+    try {
+      const resp = await fetch(`${getApiBase()}/attendance/weekly`);
+      if (resp.ok) {
+        const data: { day: string; count: number }[] = await resp.json();
+        setWeeklyData(data);
+      }
+    } catch {}
+  }, [isOnline]);
+
+  const loadApiRecords = useCallback(async () => {
+    if (!isOnline) return;
+    setRecordsLoading(true);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const resp = await fetch(`${getApiBase()}/attendance?date=${today}&limit=100`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setApiRecords(data.records ?? []);
+      }
+    } catch {}
+    setRecordsLoading(false);
+  }, [isOnline]);
+
+  useEffect(() => {
+    loadLocalWeekly();
+    loadApiStats();
+    loadApiWeekly();
+  }, [loadLocalWeekly, loadApiStats, loadApiWeekly]);
+
+  useEffect(() => {
+    if (tab === "records") loadApiRecords();
+  }, [tab, loadApiRecords]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadWeekly(), refreshAdminData()]);
+    await Promise.all([
+      loadLocalWeekly(),
+      refreshAdminData(),
+      loadApiStats(),
+      loadApiWeekly(),
+      tab === "records" ? loadApiRecords() : Promise.resolve(),
+    ]);
     setRefreshing(false);
-  }, [loadWeekly, refreshAdminData]);
+  }, [loadLocalWeekly, refreshAdminData, loadApiStats, loadApiWeekly, loadApiRecords, tab]);
+
   const plazaAttendance = plazas.map((p) => ({
     plazaId:       p.id,
     plazaName:     p.name,
@@ -68,21 +152,21 @@ export default function AdminAttendanceScreen() {
     attendancePct: p.attendancePct,
     lastUpdate:    p.lastSync,
   }));
-  const totalWorkers = plazaAttendance.reduce((s, p) => s + p.totalWorkers, 0);
-  const totalPresent = plazaAttendance.reduce((s, p) => s + p.present, 0);
-  const totalAbsent  = plazaAttendance.reduce((s, p) => s + p.absent, 0);
-  const totalLate    = plazaAttendance.reduce((s, p) => s + p.late, 0);
-  const overallPct   = totalWorkers > 0 ? Math.round((totalPresent / totalWorkers) * 100) : 0;
+
+  const serverPresent = apiStats?.present ?? plazaAttendance.reduce((s, p) => s + p.present, 0);
+  const serverAbsent  = apiStats?.absent  ?? plazaAttendance.reduce((s, p) => s + p.absent,  0);
+  const totalWorkers  = plazaAttendance.reduce((s, p) => s + p.totalWorkers, 0);
+  const overallPct    = apiStats?.rate ?? (totalWorkers > 0 ? Math.round((serverPresent / totalWorkers) * 100) : 0);
 
   const maxWeekly = Math.max(...weeklyData.map((d) => d.count), 1);
   const CHART_H = 110;
-
   const bottomPad = Platform.OS === "web" ? 24 : insets.bottom + 16;
 
   const TABS: { key: ViewTab; label: string }[] = [
-    { key: "live", label: "Live" },
-    { key: "trends", label: "Trends" },
-    { key: "alerts", label: "Alerts" },
+    { key: "live",    label: "Live"    },
+    { key: "trends",  label: "Trends"  },
+    { key: "records", label: "Records" },
+    { key: "alerts",  label: "Alerts"  },
     { key: "reports", label: "Reports" },
   ];
 
@@ -96,20 +180,40 @@ export default function AdminAttendanceScreen() {
           contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
         >
+          {/* Data source badge */}
+          <View style={[styles.sourceBadge, {
+            backgroundColor: isOnline ? colors.successBg : colors.warningBg,
+            borderRadius: colors.radius,
+          }]}>
+            <Ionicons
+              name={isOnline ? "cloud-done-outline" : "cloud-offline-outline"}
+              size={14}
+              color={isOnline ? colors.success : colors.warning}
+            />
+            <Text style={[styles.sourceBadgeText, { color: isOnline ? colors.success : colors.warning }]}>
+              {isOnline
+                ? apiStats ? "Live data from server" : "Fetching server data..."
+                : "Offline — showing cached data"}
+            </Text>
+          </View>
+
           {/* Overall KPI Banner */}
           <View style={[styles.heroBanner, { backgroundColor: colors.primary, borderRadius: colors.radius }]}>
             <View style={styles.heroLeft}>
               <Text style={styles.heroLabel}>Today's Overall Attendance</Text>
               <Text style={styles.heroPct}>{overallPct}%</Text>
               <View style={[styles.progressBarBg, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
-                <View style={[styles.progressBarFill, { width: `${overallPct}%` as never, backgroundColor: overallPct >= 90 ? "#10B981" : overallPct >= 75 ? "#F59E0B" : "#EF4444" }]} />
+                <View style={[styles.progressBarFill, {
+                  width: `${overallPct}%` as never,
+                  backgroundColor: overallPct >= 90 ? "#10B981" : overallPct >= 75 ? "#F59E0B" : "#EF4444",
+                }]} />
               </View>
             </View>
             <View style={styles.heroStats}>
               {[
-                { val: totalPresent, label: "Present", color: "#10B981" },
-                { val: totalAbsent, label: "Absent", color: "#EF4444" },
-                { val: totalLate, label: "Late", color: "#F59E0B" },
+                { val: serverPresent, label: "Present", color: "#10B981" },
+                { val: serverAbsent,  label: "Absent",  color: "#EF4444" },
+                { val: totalWorkers,  label: "Total",   color: "#fff"    },
               ].map((s, i) => (
                 <View key={i} style={styles.heroStatItem}>
                   <Text style={[styles.heroStatVal, { color: s.color }]}>{s.val}</Text>
@@ -120,18 +224,20 @@ export default function AdminAttendanceScreen() {
           </View>
 
           {/* Tabs */}
-          <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {TABS.map((t) => (
-              <TouchableOpacity
-                key={t.key}
-                style={[styles.tab, { backgroundColor: tab === t.key ? colors.primary : "transparent" }]}
-                onPress={() => { setTab(t.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.tabText, { color: tab === t.key ? "#fff" : colors.textSecondary }]}>{t.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScrollView}>
+            <View style={[styles.tabBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {TABS.map((t) => (
+                <TouchableOpacity
+                  key={t.key}
+                  style={[styles.tab, { backgroundColor: tab === t.key ? colors.primary : "transparent" }]}
+                  onPress={() => { setTab(t.key); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.tabText, { color: tab === t.key ? "#fff" : colors.textSecondary }]}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
 
           {/* ── LIVE TAB ── */}
           {tab === "live" && (
@@ -141,9 +247,8 @@ export default function AdminAttendanceScreen() {
                   <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
                   <Text style={[styles.liveText, { color: colors.success }]}>LIVE</Text>
                 </View>
-                <Text style={[styles.liveTime, { color: colors.textMuted }]}>Updated just now</Text>
+                <Text style={[styles.liveTime, { color: colors.textMuted }]}>Pull to refresh</Text>
               </View>
-
               {plazaAttendance.map((plaza) => (
                 <View key={plaza.plazaId} style={[styles.plazaCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                   <View style={styles.plazaHeader}>
@@ -152,27 +257,24 @@ export default function AdminAttendanceScreen() {
                     </View>
                     <View style={styles.plazaInfo}>
                       <Text style={[styles.plazaName, { color: colors.foreground }]}>{plaza.plazaName}</Text>
-                      <Text style={[styles.plazaRoute, { color: colors.textMuted }]}>{plaza.route} • {plaza.lastUpdate}</Text>
+                      <Text style={[styles.plazaRoute, { color: colors.textMuted }]}>{plaza.route} · {plaza.lastUpdate}</Text>
                     </View>
                     <Text style={[styles.plazaPct, {
-                      color: plaza.attendancePct >= 90 ? colors.success : plaza.attendancePct >= 75 ? colors.warning : colors.destructive
+                      color: plaza.attendancePct >= 90 ? colors.success : plaza.attendancePct >= 75 ? colors.warning : colors.destructive,
                     }]}>{plaza.attendancePct}%</Text>
                   </View>
-
-                  {/* Progress Bar */}
                   <View style={[styles.plazaProgressBg, { backgroundColor: colors.surface }]}>
                     <View style={[styles.plazaProgressFill, {
                       width: `${plaza.attendancePct}%` as never,
                       backgroundColor: plaza.attendancePct >= 90 ? colors.success : plaza.attendancePct >= 75 ? colors.warning : colors.destructive,
                     }]} />
                   </View>
-
                   <View style={[styles.plazaStatsRow, { borderTopColor: colors.border }]}>
                     {[
-                      { val: plaza.totalWorkers, label: "Total", color: colors.textSecondary },
-                      { val: plaza.present, label: "Present", color: colors.success },
-                      { val: plaza.absent, label: "Absent", color: colors.destructive },
-                      { val: plaza.late, label: "Late", color: colors.warning },
+                      { val: plaza.totalWorkers, label: "Total",   color: colors.textSecondary },
+                      { val: plaza.present,      label: "Present", color: colors.success },
+                      { val: plaza.absent,       label: "Absent",  color: colors.destructive },
+                      { val: plaza.late,         label: "Late",    color: colors.warning },
                     ].map((s, i) => (
                       <View key={i} style={[styles.plazaStat, i < 3 ? { borderRightWidth: 1, borderRightColor: colors.border } : {}]}>
                         <Text style={[styles.plazaStatVal, { color: s.color }]}>{s.val}</Text>
@@ -191,7 +293,12 @@ export default function AdminAttendanceScreen() {
               <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 <View style={styles.chartHeader}>
                   <Text style={[styles.chartTitle, { color: colors.foreground }]}>7-Day Attendance Trend</Text>
-                  <Ionicons name="trending-up-outline" size={18} color={colors.success} />
+                  <View style={styles.chartBadge}>
+                    <Ionicons name={isOnline ? "cloud-done-outline" : "phone-portrait-outline"} size={14} color={isOnline ? colors.success : colors.textMuted} />
+                    <Text style={[styles.chartBadgeText, { color: isOnline ? colors.success : colors.textMuted }]}>
+                      {isOnline ? "Server" : "Local"}
+                    </Text>
+                  </View>
                 </View>
                 <View style={[styles.chart, { height: CHART_H + 40 }]}>
                   <View style={styles.yAxis}>
@@ -214,7 +321,6 @@ export default function AdminAttendanceScreen() {
                 </View>
               </View>
 
-              {/* Plaza Comparison */}
               <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
                 <Text style={[styles.chartTitle, { color: colors.foreground }]}>Plaza-wise Comparison</Text>
                 {plazaAttendance.map((p, i) => (
@@ -232,30 +338,73 @@ export default function AdminAttendanceScreen() {
                   </View>
                 ))}
               </View>
+            </>
+          )}
 
-              {/* Monthly Summary */}
-              <View style={[styles.summaryTable, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
-                <Text style={[styles.chartTitle, { color: colors.foreground }]}>Monthly Summary</Text>
-                <View style={[styles.tableHeader, { borderBottomColor: colors.border }]}>
-                  {["Month", "Present", "Absent", "Rate"].map((h) => (
-                    <Text key={h} style={[styles.tableHeaderCell, { color: colors.textMuted }]}>{h}</Text>
-                  ))}
-                </View>
-                {[
-                  { month: "January", present: 412, absent: 48, rate: 90 },
-                  { month: "February", present: 389, absent: 51, rate: 88 },
-                  { month: "March", present: 401, absent: 39, rate: 91 },
-                  { month: "April", present: 395, absent: 45, rate: 90 },
-                  { month: "May", present: 378, absent: 52, rate: 88 },
-                ].map((row, i) => (
-                  <View key={i} style={[styles.tableRow, { borderBottomColor: colors.border }]}>
-                    <Text style={[styles.tableCell, { color: colors.foreground }]}>{row.month}</Text>
-                    <Text style={[styles.tableCell, { color: colors.success }]}>{row.present}</Text>
-                    <Text style={[styles.tableCell, { color: colors.destructive }]}>{row.absent}</Text>
-                    <Text style={[styles.tableCell, { color: row.rate >= 90 ? colors.success : colors.warning, fontWeight: "700" }]}>{row.rate}%</Text>
-                  </View>
-                ))}
+          {/* ── RECORDS TAB ── */}
+          {tab === "records" && (
+            <>
+              <View style={[styles.recordsHeader, { backgroundColor: colors.card, borderRadius: colors.radius }]}>
+                <Ionicons name="list-outline" size={16} color={colors.accent} />
+                <Text style={[styles.recordsTitle, { color: colors.foreground }]}>
+                  Today's Records {apiRecords.length > 0 ? `(${apiRecords.length})` : ""}
+                </Text>
+                <TouchableOpacity onPress={loadApiRecords} style={styles.refreshBtn}>
+                  <Ionicons name="refresh-outline" size={16} color={colors.primary} />
+                </TouchableOpacity>
               </View>
+
+              {!isOnline ? (
+                <View style={[styles.offlinePlaceholder, { backgroundColor: colors.card, borderRadius: colors.radius }]}>
+                  <Ionicons name="cloud-offline-outline" size={40} color={colors.textMuted} />
+                  <Text style={[styles.offlineTitle, { color: colors.foreground }]}>No Internet Connection</Text>
+                  <Text style={[styles.offlineSub, { color: colors.textMuted }]}>
+                    Server records are only available when online. Attendance marked offline will appear here once synced.
+                  </Text>
+                </View>
+              ) : recordsLoading ? (
+                <View style={[styles.center, { backgroundColor: colors.card, borderRadius: colors.radius }]}>
+                  <ActivityIndicator color={colors.primary} />
+                  <Text style={[styles.loadingText, { color: colors.textMuted }]}>Fetching from server...</Text>
+                </View>
+              ) : apiRecords.length === 0 ? (
+                <View style={[styles.center, { backgroundColor: colors.card, borderRadius: colors.radius }]}>
+                  <Ionicons name="checkmark-circle-outline" size={40} color={colors.textMuted} />
+                  <Text style={[styles.offlineTitle, { color: colors.foreground }]}>No records yet today</Text>
+                  <Text style={[styles.offlineSub, { color: colors.textMuted }]}>
+                    Attendance marked by operators will appear here after syncing.
+                  </Text>
+                </View>
+              ) : (
+                apiRecords.map((rec, i) => (
+                  <View key={rec.id} style={[styles.recordCard, {
+                    backgroundColor: colors.card,
+                    borderColor: rec.status === "present" ? colors.success + "44" : colors.destructive + "44",
+                    borderRadius: colors.radius,
+                  }]}>
+                    <View style={[styles.recordStatusDot, {
+                      backgroundColor: rec.status === "present" ? colors.success : colors.destructive,
+                    }]} />
+                    <View style={styles.recordInfo}>
+                      <Text style={[styles.recordWorker, { color: colors.foreground }]}>
+                        {rec.workerIdCode || `Worker #${i + 1}`}
+                      </Text>
+                      <Text style={[styles.recordMeta, { color: colors.textMuted }]}>
+                        {rec.date} · {rec.time} · Plaza: {rec.plazaId || "—"} · Op: {rec.operatorId || "—"}
+                      </Text>
+                    </View>
+                    <View style={[styles.recordBadge, {
+                      backgroundColor: rec.status === "present" ? colors.successBg : colors.destructive + "22",
+                    }]}>
+                      <Text style={[styles.recordBadgeText, {
+                        color: rec.status === "present" ? colors.success : colors.destructive,
+                      }]}>
+                        {rec.status === "present" ? "Present" : "Absent"}
+                      </Text>
+                    </View>
+                  </View>
+                ))
+              )}
             </>
           )}
 
@@ -276,7 +425,7 @@ export default function AdminAttendanceScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.missingName, { color: colors.foreground }]}>{alert.worker}</Text>
-                      <Text style={[styles.missingId, { color: colors.textMuted }]}>{alert.id} • {alert.plaza}</Text>
+                      <Text style={[styles.missingId, { color: colors.textMuted }]}>{alert.id} · {alert.plaza}</Text>
                     </View>
                     <View style={[styles.daysBadge, { backgroundColor: colors.destructive + "22" }]}>
                       <Text style={[styles.daysText, { color: colors.destructive }]}>{alert.days}d absent</Text>
@@ -325,7 +474,7 @@ export default function AdminAttendanceScreen() {
                     </View>
                     <Text style={[styles.reportLabel, { color: colors.foreground }]}>{rt.label}</Text>
                     <Text style={[styles.reportDesc, { color: colors.textMuted }]}>{rt.desc}</Text>
-                    <View style={[styles.exportRow]}>
+                    <View style={styles.exportRow}>
                       {["PDF", "XLS", "CSV"].map((fmt) => (
                         <View key={fmt} style={[styles.fmtBadge, { backgroundColor: rt.color + "22" }]}>
                           <Text style={[styles.fmtText, { color: rt.color }]}>{fmt}</Text>
@@ -346,6 +495,8 @@ export default function AdminAttendanceScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 16, gap: 12 },
+  sourceBadge: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8 },
+  sourceBadgeText: { fontSize: 12, fontWeight: "600" },
   heroBanner: { padding: 18, gap: 12 },
   heroLeft: { gap: 6 },
   heroLabel: { color: "rgba(255,255,255,0.7)", fontSize: 12 },
@@ -356,8 +507,9 @@ const styles = StyleSheet.create({
   heroStatItem: { alignItems: "center", gap: 2 },
   heroStatVal: { fontSize: 20, fontWeight: "800" },
   heroStatLabel: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
+  tabScrollView: { flexGrow: 0 },
   tabBar: { flexDirection: "row", padding: 4, borderRadius: 10, borderWidth: 1, gap: 2 },
-  tab: { flex: 1, paddingVertical: 8, borderRadius: 7, alignItems: "center" },
+  tab: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 7, alignItems: "center" },
   tabText: { fontSize: 13, fontWeight: "600" },
   liveHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   livePulse: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -379,6 +531,8 @@ const styles = StyleSheet.create({
   plazaStatLabel: { fontSize: 10 },
   chartCard: { borderWidth: 1, padding: 16, gap: 14 },
   chartHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  chartBadge: { flexDirection: "row", alignItems: "center", gap: 4 },
+  chartBadgeText: { fontSize: 11 },
   chartTitle: { fontSize: 14, fontWeight: "700" },
   chart: { flexDirection: "row", gap: 8, alignItems: "flex-end" },
   yAxis: { justifyContent: "space-between", paddingBottom: 30, alignItems: "flex-end", width: 24 },
@@ -393,11 +547,21 @@ const styles = StyleSheet.create({
   compareBarBg: { flex: 1, height: 8, borderRadius: 4, overflow: "hidden" },
   compareBarFill: { height: "100%", borderRadius: 4 },
   comparePct: { width: 36, fontSize: 12, fontWeight: "700", textAlign: "right" },
-  summaryTable: { borderWidth: 1, overflow: "hidden" },
-  tableHeader: { flexDirection: "row", padding: 12, borderBottomWidth: 1 },
-  tableHeaderCell: { flex: 1, fontSize: 11, fontWeight: "700", textAlign: "center" },
-  tableRow: { flexDirection: "row", padding: 12, borderBottomWidth: 1 },
-  tableCell: { flex: 1, fontSize: 13, textAlign: "center" },
+  recordsHeader: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12 },
+  recordsTitle: { flex: 1, fontSize: 14, fontWeight: "700" },
+  refreshBtn: { padding: 4 },
+  recordCard: { flexDirection: "row", alignItems: "center", padding: 12, borderWidth: 1, gap: 10 },
+  recordStatusDot: { width: 10, height: 10, borderRadius: 5 },
+  recordInfo: { flex: 1, gap: 2 },
+  recordWorker: { fontSize: 13, fontWeight: "600" },
+  recordMeta: { fontSize: 11 },
+  recordBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
+  recordBadgeText: { fontSize: 11, fontWeight: "700" },
+  offlinePlaceholder: { padding: 32, alignItems: "center", gap: 10 },
+  offlineTitle: { fontSize: 15, fontWeight: "700", textAlign: "center" },
+  offlineSub: { fontSize: 12, textAlign: "center", lineHeight: 18 },
+  center: { padding: 32, alignItems: "center", gap: 10 },
+  loadingText: { fontSize: 13 },
   alertBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderWidth: 1 },
   alertBannerText: { flex: 1, fontSize: 13, fontWeight: "500" },
   missingCard: { borderWidth: 1, overflow: "hidden" },

@@ -101,6 +101,7 @@ export default function RootLayout() {
                     <Stack.Screen name="worker-profile" />
                     <Stack.Screen name="edit-worker" />
                     <Stack.Screen name="sync-center" />
+                    <Stack.Screen name="manual-attendance" />
                     <Stack.Screen name="reports" />
                     <Stack.Screen name="settings" />
                     {/* Admin screens */}

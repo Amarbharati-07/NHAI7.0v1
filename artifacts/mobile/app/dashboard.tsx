@@ -27,7 +27,8 @@ interface Stats { total: number; present: number; absent: number; pending: numbe
 const OPERATOR_QUICK_ACTIONS = [
   { label: "Worker Directory", icon: "people" as const, color: "#0B5EA8", route: "/worker-directory" },
   { label: "Register Worker", icon: "person-add" as const, color: "#F97316", route: "/register-worker" },
-  { label: "Mark Attendance", icon: "face" as const, color: "#EA580C", route: "/attendance" },
+  { label: "Mark Attendance", icon: "how-to-reg" as const, color: "#EA580C", route: "/manual-attendance" },
+  { label: "Face Scan", icon: "face" as const, color: "#7C3AED", route: "/attendance" },
   { label: "Attendance History", icon: "history" as const, color: "#0B7ED4", route: "/attendance-history" },
   { label: "Sync Data", icon: "cloud-sync" as const, color: "#16A34A", route: "/sync-center" },
 ];
