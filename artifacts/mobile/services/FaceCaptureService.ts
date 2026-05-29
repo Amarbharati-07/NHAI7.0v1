@@ -7,7 +7,7 @@
  * `analyzeCapture()` below.
  */
 
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { Paths } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 
