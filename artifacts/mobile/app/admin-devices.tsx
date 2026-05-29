@@ -3,7 +3,6 @@ import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Platform,
   ScrollView,
@@ -23,6 +22,7 @@ import {
   type AllocStatus,
   type RegisteredDevice,
   type OperatorAllocation,
+  type AllocationHistoryEntry,
   getRegisteredDevices,
   getAllocations,
   registerDevice,
@@ -31,6 +31,9 @@ import {
   updateDeviceStatus,
   getOrCreateDeviceToken,
   getDevicePlatform,
+  getDefaultOsVersion,
+  generateDeviceToken,
+  generateAppToken,
 } from "@/services/deviceService";
 import { useColors } from "@/hooks/useColors";
 
@@ -51,16 +54,29 @@ const ALLOC_STATUS_META: Record<AllocStatus, { label: string; color: string }> =
 
 /* ── Device Registry Card ── */
 function DeviceRegistryCard({
-  device, onAction,
+  device, onAction, onViewHistory,
 }: {
   device: RegisteredDevice;
   onAction: (action: "allocate" | "block" | "unblock" | "deactivate", d: RegisteredDevice) => void;
+  onViewHistory: (d: RegisteredDevice) => void;
 }) {
   const colors = useColors();
-  const meta   = DEV_STATUS_META[device.status];
+  const meta = DEV_STATUS_META[device.status];
+  const [expanded, setExpanded] = useState(false);
+
+  const healthColor =
+    device.status === "allocated" && device.lastActiveTime !== "Never"
+      ? colors.success
+      : device.status === "available"
+      ? colors.warning
+      : device.status === "blocked"
+      ? colors.destructive
+      : colors.textMuted;
+
   return (
     <View style={[rc.card, { backgroundColor: colors.card, borderColor: device.status === "blocked" ? colors.destructive + "44" : colors.border, borderRadius: colors.radius }]}>
-      <View style={rc.row}>
+      {/* Header Row */}
+      <View style={rc.headerRow}>
         <View style={[rc.platformIcon, { backgroundColor: meta.color + "18" }]}>
           <Ionicons
             name={device.platform === "ios" ? "logo-apple" : device.platform === "android" ? "logo-android" : "globe-outline"}
@@ -68,10 +84,13 @@ function DeviceRegistryCard({
           />
         </View>
         <View style={rc.info}>
-          <Text style={[rc.name, { color: colors.foreground }]} numberOfLines={1}>{device.deviceName}</Text>
-          <Text style={[rc.model, { color: colors.textSecondary }]}>{device.deviceModel}</Text>
-          <Text style={[rc.token, { color: colors.textMuted }]} numberOfLines={1}>
-            Token: {device.deviceToken.slice(0, 18)}…
+          <View style={rc.nameLine}>
+            <Text style={[rc.devId, { color: colors.accent }]}>{device.id}</Text>
+            <Text style={[rc.name, { color: colors.foreground }]} numberOfLines={1}>{device.deviceName}</Text>
+          </View>
+          <Text style={[rc.model, { color: colors.textSecondary }]}>{device.deviceModel} · {device.osVersion}</Text>
+          <Text style={[rc.token, { color: colors.textMuted }]} numberOfLines={1} selectable>
+            Token: {device.deviceToken}
           </Text>
         </View>
         <View style={rc.statusCol}>
@@ -79,10 +98,82 @@ function DeviceRegistryCard({
             <Ionicons name={meta.icon} size={11} color={meta.color} />
             <Text style={[rc.statusText, { color: meta.color }]}>{meta.label}</Text>
           </View>
-          <Text style={[rc.date, { color: colors.textMuted }]}>{device.registrationDate}</Text>
+          <View style={[rc.healthDot, { backgroundColor: healthColor }]} />
         </View>
       </View>
 
+      {/* Info Grid */}
+      <View style={[rc.infoGrid, { borderTopColor: colors.border }]}>
+        <View style={rc.infoCell}>
+          <Text style={[rc.infoLabel, { color: colors.textMuted }]}>Registered</Text>
+          <Text style={[rc.infoValue, { color: colors.foreground }]}>{device.registrationDate}</Text>
+          <Text style={[rc.infoSub, { color: colors.textMuted }]}>{device.registrationTime}</Text>
+        </View>
+        <View style={[rc.infoCellDivider, { backgroundColor: colors.border }]} />
+        <View style={rc.infoCell}>
+          <Text style={[rc.infoLabel, { color: colors.textMuted }]}>Reg. By</Text>
+          <Text style={[rc.infoValue, { color: colors.foreground }]}>{device.registeredBy}</Text>
+        </View>
+        <View style={[rc.infoCellDivider, { backgroundColor: colors.border }]} />
+        <View style={rc.infoCell}>
+          <Text style={[rc.infoLabel, { color: colors.textMuted }]}>Last Active</Text>
+          <Text style={[rc.infoValue, { color: device.lastActiveTime === "Never" ? colors.textMuted : colors.foreground }]} numberOfLines={1}>
+            {device.lastActiveTime}
+          </Text>
+        </View>
+        <View style={[rc.infoCellDivider, { backgroundColor: colors.border }]} />
+        <View style={rc.infoCell}>
+          <Text style={[rc.infoLabel, { color: colors.textMuted }]}>Last Login</Text>
+          <Text style={[rc.infoValue, { color: device.lastLoginTime === "Never" ? colors.textMuted : colors.foreground }]} numberOfLines={1}>
+            {device.lastLoginTime}
+          </Text>
+        </View>
+      </View>
+
+      {/* Assignment Row */}
+      <View style={[rc.assignRow, { borderTopColor: colors.border, backgroundColor: device.assignedOperatorId ? colors.primary + "08" : "transparent" }]}>
+        <Ionicons
+          name={device.assignedOperatorId ? "person-circle" : "person-circle-outline"}
+          size={14} color={device.assignedOperatorId ? colors.accent : colors.textMuted}
+        />
+        <Text style={[rc.assignText, { color: device.assignedOperatorId ? colors.foreground : colors.textMuted }]} numberOfLines={1}>
+          {device.assignedOperatorId ? `${device.assignedOperatorName}` : "Not Assigned"}
+        </Text>
+        {device.assignedPlazaId ? (
+          <>
+            <Text style={[rc.assignSep, { color: colors.textMuted }]}>·</Text>
+            <Ionicons name="business-outline" size={12} color={colors.textMuted} />
+            <Text style={[rc.assignSub, { color: colors.textMuted }]} numberOfLines={1}>{device.assignedPlazaName}</Text>
+          </>
+        ) : null}
+        {device.allocationHistory.length > 0 && (
+          <TouchableOpacity
+            style={[rc.histBtn, { backgroundColor: colors.primary + "15", borderColor: colors.primary + "33" }]}
+            onPress={() => onViewHistory(device)}
+          >
+            <Ionicons name="time-outline" size={11} color={colors.accent} />
+            <Text style={[rc.histBtnText, { color: colors.accent }]}>{device.allocationHistory.length} hist.</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* App Token (expandable) */}
+      <TouchableOpacity
+        style={[rc.expandRow, { borderTopColor: colors.border }]}
+        onPress={() => setExpanded(!expanded)}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="shield-checkmark-outline" size={13} color={colors.textMuted} />
+        <Text style={[rc.expandLabel, { color: colors.textMuted }]}>App Token</Text>
+        <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={13} color={colors.textMuted} />
+      </TouchableOpacity>
+      {expanded && (
+        <View style={[rc.tokenExpanded, { borderTopColor: colors.border, backgroundColor: colors.surface }]}>
+          <Text style={[rc.tokenFull, { color: colors.textSecondary }]} selectable>{device.appToken}</Text>
+        </View>
+      )}
+
+      {/* Actions */}
       <View style={[rc.actions, { borderTopColor: colors.border }]}>
         {device.status === "available" && (
           <TouchableOpacity style={[rc.btn, { backgroundColor: colors.accent + "18" }]} onPress={() => onAction("allocate", device)}>
@@ -114,13 +205,16 @@ function DeviceRegistryCard({
 
 /* ── Allocation Card ── */
 function AllocationCard({
-  alloc, onAction,
+  alloc, devices, onAction,
 }: {
   alloc: OperatorAllocation;
+  devices: RegisteredDevice[];
   onAction: (action: "block" | "replace" | "reassign", a: OperatorAllocation) => void;
 }) {
   const colors = useColors();
-  const meta   = ALLOC_STATUS_META[alloc.status];
+  const meta = ALLOC_STATUS_META[alloc.status];
+  const device = devices.find((d) => d.id === alloc.deviceId);
+
   return (
     <View style={[ac.card, { backgroundColor: colors.card, borderColor: alloc.status === "blocked" ? colors.destructive + "44" : colors.border, borderRadius: colors.radius }]}>
       <View style={ac.header}>
@@ -139,20 +233,29 @@ function AllocationCard({
 
       <View style={[ac.detailGrid, { borderTopColor: colors.border }]}>
         {[
-          { icon: "business-outline" as const,        label: "Plaza",      value: alloc.plazaName },
-          { icon: "phone-portrait-outline" as const,  label: "Device",     value: alloc.deviceName },
+          { icon: "business-outline" as const,       label: "Plaza",      value: alloc.plazaName },
+          { icon: "phone-portrait-outline" as const,  label: "Device",     value: `${alloc.deviceId} · ${alloc.deviceName}` },
           { icon: "hardware-chip-outline" as const,   label: "Model",      value: alloc.deviceModel },
           { icon: "calendar-outline" as const,        label: "Allocated",  value: alloc.allocatedAt },
+          { icon: "key-outline" as const,             label: "Token",      value: alloc.deviceToken.slice(0, 20) + "…" },
+          { icon: "person-outline" as const,          label: "By Admin",   value: alloc.allocatedBy },
         ].map(({ icon, label, value }) => (
           <View key={label} style={ac.detailItem}>
-            <Ionicons name={icon} size={13} color={colors.textMuted} />
-            <View>
+            <Ionicons name={icon} size={12} color={colors.textMuted} />
+            <View style={{ flex: 1 }}>
               <Text style={[ac.detailLabel, { color: colors.textMuted }]}>{label}</Text>
               <Text style={[ac.detailValue, { color: colors.foreground }]} numberOfLines={1}>{value}</Text>
             </View>
           </View>
         ))}
       </View>
+
+      {device && (
+        <View style={[ac.deviceBadge, { borderTopColor: colors.border, backgroundColor: colors.surface }]}>
+          <Ionicons name={device.platform === "ios" ? "logo-apple" : device.platform === "android" ? "logo-android" : "globe-outline"} size={12} color={colors.textMuted} />
+          <Text style={[ac.deviceBadgeText, { color: colors.textMuted }]}>{device.osVersion} · Last active: {device.lastActiveTime}</Text>
+        </View>
+      )}
 
       {alloc.status === "active" && (
         <View style={[ac.actions, { borderTopColor: colors.border }]}>
@@ -189,24 +292,28 @@ type AlFilter  = "all" | "active" | "replaced" | "blocked";
 export default function AdminDevicesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const topPad = Platform.OS === "web" ? 0 : insets.top;
   const botPad = Platform.OS === "web" ? 24 : insets.bottom + 20;
 
-  const [mainTab,    setMainTab]    = useState<MainTab>("registry");
-  const [regFilter,  setRegFilter]  = useState<RegFilter>("all");
-  const [alFilter,   setAlFilter]   = useState<AlFilter>("all");
-  const [devices,    setDevices]    = useState<RegisteredDevice[]>([]);
-  const [allocs,     setAllocs]     = useState<OperatorAllocation[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [saving,     setSaving]     = useState(false);
+  const [mainTab,   setMainTab]   = useState<MainTab>("registry");
+  const [regFilter, setRegFilter] = useState<RegFilter>("all");
+  const [alFilter,  setAlFilter]  = useState<AlFilter>("all");
+  const [devices,   setDevices]   = useState<RegisteredDevice[]>([]);
+  const [allocs,    setAllocs]    = useState<OperatorAllocation[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [saving,    setSaving]    = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
 
   /* Register Device Modal */
-  const [showRegModal,  setShowRegModal]  = useState(false);
-  const [regName,       setRegName]       = useState("");
-  const [regModel,      setRegModel]      = useState("");
-  const [regPlatform,   setRegPlatform]   = useState<DevicePlatform>("android");
-  const [useCurrentDev, setUseCurrentDev] = useState(true);
-  const [manualToken,   setManualToken]   = useState("");
+  const [showRegModal,   setShowRegModal]   = useState(false);
+  const [regName,        setRegName]        = useState("");
+  const [regModel,       setRegModel]       = useState("");
+  const [regOsVersion,   setRegOsVersion]   = useState("");
+  const [regPlatform,    setRegPlatform]    = useState<DevicePlatform>("android");
+  const [regToken,       setRegToken]       = useState("");
+  const [regAppToken,    setRegAppToken]    = useState("");
+  const [useCurrentDev,  setUseCurrentDev]  = useState(true);
+  const [previewDevId,   setPreviewDevId]   = useState(""); // Preview of auto-generated ID
+  const [regPlazaId,     setRegPlazaId]     = useState("");
 
   /* Allocate Device Modal */
   const [showAllocModal, setShowAllocModal] = useState(false);
@@ -214,10 +321,18 @@ export default function AdminDevicesScreen() {
   const [allocOpId,      setAllocOpId]      = useState("");
 
   /* Action Modal */
-  const [actionModal,   setActionModal]   = useState<{ type: "block_device" | "block_alloc" | "replace" | "reassign"; id: string; extra?: string } | null>(null);
+  const [actionModal,   setActionModal]   = useState<{ type: "block_device" | "block_alloc" | "replace" | "reassign" | "deactivate"; id: string; extra?: string } | null>(null);
   const [actionReason,  setActionReason]  = useState("");
   const [replaceDevId,  setReplaceDevId]  = useState("");
   const [reassignOpId,  setReassignOpId]  = useState("");
+
+  /* History Modal */
+  const [historyDevice, setHistoryDevice] = useState<RegisteredDevice | null>(null);
+
+  const showSuccess = (msg: string) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(""), 3500);
+  };
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -229,41 +344,73 @@ export default function AdminDevicesScreen() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  /* Refresh registration token previews when modal opens */
+  const openRegModal = async () => {
+    const existingDevices = await getRegisteredDevices();
+    const nums = existingDevices
+      .map((d) => parseInt(d.id.replace("DEV", ""), 10))
+      .filter((n) => !isNaN(n));
+    const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+    setPreviewDevId(`DEV${String(next).padStart(3, "0")}`);
+
+    const platform = getDevicePlatform();
+    setRegPlatform(platform);
+    setRegOsVersion(getDefaultOsVersion(platform));
+
+    let tok: string;
+    if (useCurrentDev) {
+      tok = await getOrCreateDeviceToken();
+    } else {
+      tok = generateDeviceToken(platform);
+    }
+    setRegToken(tok);
+    setRegAppToken(generateAppToken());
+    setRegName("");
+    setRegModel("");
+    setRegPlazaId("");
+    setShowRegModal(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const refreshTokens = async () => {
+    if (useCurrentDev) {
+      const tok = await getOrCreateDeviceToken();
+      setRegToken(tok);
+    } else {
+      setRegToken(generateDeviceToken(regPlatform));
+    }
+    setRegAppToken(generateAppToken());
+  };
+
   /* ── Register Device ── */
   const handleRegisterDevice = async () => {
-    if (!regName.trim() || !regModel.trim()) {
-      Alert.alert("Validation", "Device Name and Model are required.");
-      return;
-    }
+    if (!regName.trim() || !regModel.trim()) return;
     setSaving(true);
     try {
-      let token = manualToken.trim();
-      if (useCurrentDev) token = await getOrCreateDeviceToken();
+      const plaza = MOCK_TOLL_PLAZAS.find((p) => p.id === regPlazaId);
       await registerDevice({
-        deviceName: regName.trim(),
-        deviceModel: regModel.trim(),
-        platform: regPlatform,
-        deviceToken: token || `SPT-MANUAL-${Date.now()}`,
-        registeredBy: "ADMIN001",
-        status: "available",
+        deviceName:        regName.trim(),
+        deviceModel:       regModel.trim(),
+        platform:          regPlatform,
+        osVersion:         regOsVersion.trim() || getDefaultOsVersion(regPlatform),
+        deviceToken:       regToken,
+        registeredBy:      "ADMIN001",
+        assignedPlazaId:   plaza?.id,
+        assignedPlazaName: plaza?.name,
       });
       setShowRegModal(false);
-      setRegName(""); setRegModel(""); setManualToken("");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await loadData();
-      Alert.alert("Success", "Device registered successfully.");
+      showSuccess(`Device "${regName}" registered as ${previewDevId}.`);
     } catch {
-      Alert.alert("Error", "Failed to register device.");
+      /* silent – UI handles empty state */
     }
     setSaving(false);
   };
 
   /* ── Allocate Device ── */
   const handleAllocate = async () => {
-    if (!allocDeviceId || !allocOpId) {
-      Alert.alert("Validation", "Select a device and an operator.");
-      return;
-    }
+    if (!allocDeviceId || !allocOpId) return;
     setSaving(true);
     try {
       const device   = devices.find((d) => d.id === allocDeviceId);
@@ -280,6 +427,7 @@ export default function AdminDevicesScreen() {
         deviceModel:  device.deviceModel,
         platform:     device.platform,
         deviceToken:  device.deviceToken,
+        appToken:     device.appToken,
         status:       "active",
         allocatedAt:  new Date().toISOString().split("T")[0],
         allocatedBy:  "ADMIN001",
@@ -288,37 +436,33 @@ export default function AdminDevicesScreen() {
       setAllocDeviceId(""); setAllocOpId("");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await loadData();
-      Alert.alert("Success", `Device allocated to ${operator.name}.`);
-    } catch (e) {
-      Alert.alert("Error", "Failed to allocate device.");
-    }
+      showSuccess(`${device.id} allocated to ${operator.name}.`);
+    } catch { /* noop */ }
     setSaving(false);
   };
 
   /* ── Device Actions ── */
-  const handleDeviceAction = async (action: "allocate" | "block" | "unblock" | "deactivate", device: RegisteredDevice) => {
+  const handleDeviceAction = (action: "allocate" | "block" | "unblock" | "deactivate", device: RegisteredDevice) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (action === "allocate") {
       setAllocDeviceId(device.id);
+      setAllocOpId("");
       setShowAllocModal(true);
     } else if (action === "block") {
+      setActionReason("");
       setActionModal({ type: "block_device", id: device.id });
     } else if (action === "unblock") {
-      await updateDeviceStatus(device.id, "available");
-      await loadData();
-      Alert.alert("Unblocked", "Device is now available.");
+      setActionModal({ type: "deactivate", id: device.id, extra: "unblock" });
     } else if (action === "deactivate") {
-      Alert.alert("Deactivate", "Mark this device as inactive?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Deactivate", style: "destructive", onPress: async () => { await updateDeviceStatus(device.id, "inactive"); await loadData(); } },
-      ]);
+      setActionModal({ type: "deactivate", id: device.id, extra: "deactivate" });
     }
   };
 
   /* ── Allocation Actions ── */
-  const handleAllocAction = async (action: "block" | "replace" | "reassign", alloc: OperatorAllocation) => {
+  const handleAllocAction = (action: "block" | "replace" | "reassign", alloc: OperatorAllocation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (action === "block") {
+      setActionReason("");
       setActionModal({ type: "block_alloc", id: alloc.id });
     } else if (action === "replace") {
       setReplaceDevId("");
@@ -336,12 +480,20 @@ export default function AdminDevicesScreen() {
     try {
       if (actionModal.type === "block_device") {
         await updateDeviceStatus(actionModal.id, "blocked");
-        Alert.alert("Blocked", "Device has been blocked.");
+        showSuccess("Device blocked successfully.");
+      } else if (actionModal.type === "deactivate") {
+        if (actionModal.extra === "unblock") {
+          await updateDeviceStatus(actionModal.id, "available");
+          showSuccess("Device unblocked — now available.");
+        } else {
+          await updateDeviceStatus(actionModal.id, "inactive");
+          showSuccess("Device deactivated.");
+        }
       } else if (actionModal.type === "block_alloc") {
         await updateAllocationStatus(actionModal.id, "blocked", actionReason || "Blocked by Admin");
-        Alert.alert("Blocked", "Allocation blocked. Operator will be denied attendance access.");
+        showSuccess("Allocation blocked. Operator access revoked.");
       } else if (actionModal.type === "replace") {
-        if (!replaceDevId) { Alert.alert("Select a replacement device."); setSaving(false); return; }
+        if (!replaceDevId) { setSaving(false); return; }
         const oldAlloc = allocs.find((a) => a.id === actionModal.id);
         const newDev   = devices.find((d) => d.id === replaceDevId);
         if (!oldAlloc || !newDev) { setSaving(false); return; }
@@ -355,13 +507,14 @@ export default function AdminDevicesScreen() {
           deviceModel:  newDev.deviceModel,
           platform:     newDev.platform,
           deviceToken:  newDev.deviceToken,
+          appToken:     newDev.appToken,
           status:       "active",
           allocatedAt:  new Date().toISOString().split("T")[0],
           allocatedBy:  "ADMIN001",
         });
-        Alert.alert("Replaced", "Device replaced and new allocation created.");
+        showSuccess(`Device replaced with ${newDev.id}.`);
       } else if (actionModal.type === "reassign") {
-        if (!reassignOpId) { Alert.alert("Select a target operator."); setSaving(false); return; }
+        if (!reassignOpId) { setSaving(false); return; }
         const oldAlloc  = allocs.find((a) => a.id === actionModal.id);
         const newOp     = MOCK_OPERATORS.find((o) => o.id === reassignOpId);
         const newPlaza  = MOCK_TOLL_PLAZAS.find((p) => p.id === newOp?.plazaId);
@@ -377,39 +530,51 @@ export default function AdminDevicesScreen() {
           deviceModel:  oldAlloc.deviceModel,
           platform:     oldAlloc.platform,
           deviceToken:  oldAlloc.deviceToken,
+          appToken:     oldAlloc.appToken,
           status:       "active",
           allocatedAt:  new Date().toISOString().split("T")[0],
           allocatedBy:  "ADMIN001",
         });
-        Alert.alert("Reassigned", `Device reassigned to ${newOp.name}.`);
+        showSuccess(`Device reassigned to ${newOp.name}.`);
       }
       setActionModal(null);
       setActionReason(""); setReplaceDevId(""); setReassignOpId("");
       await loadData();
-    } catch {
-      Alert.alert("Error", "Action failed.");
-    }
+    } catch { /* noop */ }
     setSaving(false);
   };
 
-  /* ── Filtered data ── */
+  /* ── Derived data ── */
   const filteredDevices = devices.filter((d) => regFilter === "all" ? true : d.status === regFilter);
   const filteredAllocs  = allocs.filter((a) => alFilter === "all" ? true : a.status === alFilter);
   const availableDevs   = devices.filter((d) => d.status === "available");
   const activeOperators = MOCK_OPERATORS.filter((o) => o.status === "active");
 
-  /* ── KPI row ── */
   const kpis = [
-    { label: "Registered", value: devices.length,                        color: colors.primary },
-    { label: "Available",  value: devices.filter((d) => d.status === "available").length,  color: colors.success },
-    { label: "Allocated",  value: devices.filter((d) => d.status === "allocated").length,  color: colors.accent },
-    { label: "Blocked",    value: devices.filter((d) => d.status === "blocked").length,    color: colors.destructive },
+    { label: "Registered", value: devices.length,                                       color: colors.primary },
+    { label: "Available",  value: devices.filter((d) => d.status === "available").length, color: colors.success },
+    { label: "Allocated",  value: devices.filter((d) => d.status === "allocated").length, color: colors.accent },
+    { label: "Blocked",    value: devices.filter((d) => d.status === "blocked").length,   color: colors.destructive },
   ];
+
+  const actionTitle = actionModal?.type === "block_device"  ? "Block Device"
+    : actionModal?.type === "block_alloc"  ? "Block Allocation"
+    : actionModal?.type === "replace"      ? `Replace Device for ${actionModal.extra}`
+    : actionModal?.type === "reassign"     ? `Reassign ${actionModal.extra}`
+    : actionModal?.extra === "unblock"     ? "Unblock Device"
+    : "Deactivate Device";
 
   return (
     <DrawerOverlay>
       <View style={[st.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Device Management" showBack />
+
+        {successMsg !== "" && (
+          <View style={[st.successBanner, { backgroundColor: colors.success + "22", borderColor: colors.success + "55" }]}>
+            <Ionicons name="checkmark-circle" size={15} color={colors.success} />
+            <Text style={[st.successText, { color: colors.success }]}>{successMsg}</Text>
+          </View>
+        )}
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[st.scroll, { paddingBottom: botPad }]}>
 
@@ -442,7 +607,6 @@ export default function AdminDevicesScreen() {
             <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
           ) : mainTab === "registry" ? (
             <>
-              {/* Registry Filter Pills */}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.filterScroll} contentContainerStyle={st.filterRow}>
                 {(["all", "available", "allocated", "blocked"] as RegFilter[]).map((f) => (
                   <TouchableOpacity
@@ -458,10 +622,9 @@ export default function AdminDevicesScreen() {
                 ))}
               </ScrollView>
 
-              {/* Register Button */}
               <TouchableOpacity
                 style={[st.addBtn, { backgroundColor: colors.accent, borderRadius: colors.radius }]}
-                onPress={() => { setShowRegModal(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); }}
+                onPress={openRegModal}
               >
                 <Ionicons name="add-circle-outline" size={18} color="#fff" />
                 <Text style={st.addBtnText}>Register New Device</Text>
@@ -474,13 +637,12 @@ export default function AdminDevicesScreen() {
                 </View>
               ) : (
                 filteredDevices.map((d) => (
-                  <DeviceRegistryCard key={d.id} device={d} onAction={handleDeviceAction} />
+                  <DeviceRegistryCard key={d.id} device={d} onAction={handleDeviceAction} onViewHistory={setHistoryDevice} />
                 ))
               )}
             </>
           ) : (
             <>
-              {/* Allocation Filter Pills */}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.filterScroll} contentContainerStyle={st.filterRow}>
                 {(["all", "active", "replaced", "blocked"] as AlFilter[]).map((f) => (
                   <TouchableOpacity
@@ -496,7 +658,6 @@ export default function AdminDevicesScreen() {
                 ))}
               </ScrollView>
 
-              {/* Allocate Button */}
               <TouchableOpacity
                 style={[st.addBtn, { backgroundColor: colors.accent, borderRadius: colors.radius }]}
                 onPress={() => { setAllocDeviceId(""); setAllocOpId(""); setShowAllocModal(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); }}
@@ -512,7 +673,7 @@ export default function AdminDevicesScreen() {
                 </View>
               ) : (
                 filteredAllocs.map((a) => (
-                  <AllocationCard key={a.id} alloc={a} onAction={handleAllocAction} />
+                  <AllocationCard key={a.id} alloc={a} devices={devices} onAction={handleAllocAction} />
                 ))
               )}
             </>
@@ -520,28 +681,56 @@ export default function AdminDevicesScreen() {
         </ScrollView>
       </View>
 
-      {/* ── Register Device Modal ── */}
+      {/* ══════════════ Register Device Modal ══════════════ */}
       <Modal visible={showRegModal} animationType="slide" transparent onRequestClose={() => setShowRegModal(false)}>
-        <View style={st.modalOverlay}>
-          <View style={[st.modalSheet, { backgroundColor: colors.card }]}>
-            <View style={[st.modalHeader, { borderBottomColor: colors.border }]}>
-              <Text style={[st.modalTitle, { color: colors.foreground }]}>Register New Device</Text>
+        <View style={st.overlay}>
+          <View style={[st.sheet, { backgroundColor: colors.card }]}>
+            <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="phone-portrait-outline" size={18} color={colors.accent} />
+                <Text style={[st.sheetTitle, { color: colors.foreground }]}>Register New Device</Text>
+              </View>
               <TouchableOpacity onPress={() => setShowRegModal(false)}>
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
-            <ScrollView style={st.modalBody} keyboardShouldPersistTaps="handled">
-              <View style={[st.field, { gap: 6 }]}>
+
+            <ScrollView style={st.sheetBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+
+              {/* Auto-generated identifiers banner */}
+              <View style={[st.idBanner, { backgroundColor: colors.accent + "10", borderColor: colors.accent + "33" }]}>
+                <View style={st.idBannerRow}>
+                  <View style={st.idBannerItem}>
+                    <Text style={[st.idBannerLabel, { color: colors.textMuted }]}>Device ID</Text>
+                    <Text style={[st.idBannerValue, { color: colors.accent }]}>{previewDevId}</Text>
+                  </View>
+                  <View style={[st.idBannerDivider, { backgroundColor: colors.accent + "33" }]} />
+                  <View style={[st.idBannerItem, { flex: 2 }]}>
+                    <Text style={[st.idBannerLabel, { color: colors.textMuted }]}>Registration Timestamp</Text>
+                    <Text style={[st.idBannerValue, { color: colors.foreground }]} numberOfLines={1}>
+                      {new Date().toLocaleDateString("en-IN")} · {new Date().toLocaleTimeString("en-IN")}
+                    </Text>
+                  </View>
+                </View>
+                <View style={[st.idBannerDivider, { backgroundColor: colors.accent + "22", height: 1, width: "100%", marginVertical: 8 }]} />
+                <Text style={[st.idBannerLabel, { color: colors.textMuted }]}>Registered By</Text>
+                <Text style={[st.idBannerValue, { color: colors.foreground }]}>ADMIN001</Text>
+              </View>
+
+              {/* Device Name */}
+              <View style={st.field}>
                 <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Device Name *</Text>
                 <TextInput
-                  style={[st.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.foreground }]}
-                  placeholder="e.g. Field Device 2"
+                  style={[st.input, { backgroundColor: colors.surface, borderColor: regName.trim() ? colors.border : regName === "" ? colors.border : colors.destructive, color: colors.foreground }]}
+                  placeholder="e.g. Field Device 5"
                   placeholderTextColor={colors.mutedForeground}
                   value={regName}
                   onChangeText={setRegName}
                 />
               </View>
-              <View style={[st.field, { gap: 6 }]}>
+
+              {/* Device Model */}
+              <View style={st.field}>
                 <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Device Model *</Text>
                 <TextInput
                   style={[st.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.foreground }]}
@@ -551,14 +740,20 @@ export default function AdminDevicesScreen() {
                   onChangeText={setRegModel}
                 />
               </View>
-              <View style={[st.field, { gap: 6 }]}>
+
+              {/* Platform */}
+              <View style={st.field}>
                 <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Platform</Text>
                 <View style={st.platformRow}>
                   {(["android", "ios", "web"] as DevicePlatform[]).map((p) => (
                     <TouchableOpacity
                       key={p}
                       style={[st.platformPill, { backgroundColor: regPlatform === p ? colors.primary : colors.surface, borderColor: regPlatform === p ? colors.primary : colors.border }]}
-                      onPress={() => setRegPlatform(p)}
+                      onPress={() => {
+                        setRegPlatform(p);
+                        setRegOsVersion(getDefaultOsVersion(p));
+                        if (!useCurrentDev) setRegToken(generateDeviceToken(p));
+                      }}
                     >
                       <Ionicons name={p === "ios" ? "logo-apple" : p === "android" ? "logo-android" : "globe-outline"} size={14} color={regPlatform === p ? "#fff" : colors.textSecondary} />
                       <Text style={[st.platformText, { color: regPlatform === p ? "#fff" : colors.textSecondary }]}>
@@ -568,55 +763,130 @@ export default function AdminDevicesScreen() {
                   ))}
                 </View>
               </View>
-              <View style={[st.field, { gap: 6 }]}>
-                <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Device Token</Text>
+
+              {/* OS Version */}
+              <View style={st.field}>
+                <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>OS Version</Text>
+                <TextInput
+                  style={[st.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.foreground }]}
+                  placeholder="e.g. Android 13, iOS 17.2"
+                  placeholderTextColor={colors.mutedForeground}
+                  value={regOsVersion}
+                  onChangeText={setRegOsVersion}
+                />
+              </View>
+
+              {/* Device Token */}
+              <View style={st.field}>
+                <View style={st.fieldLabelRow}>
+                  <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Device Token (auto-generated)</Text>
+                  <TouchableOpacity onPress={refreshTokens}>
+                    <Ionicons name="refresh-outline" size={15} color={colors.accent} />
+                  </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   style={[st.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                  onPress={() => setUseCurrentDev(!useCurrentDev)}
+                  onPress={async () => {
+                    const next = !useCurrentDev;
+                    setUseCurrentDev(next);
+                    if (next) {
+                      setRegToken(await getOrCreateDeviceToken());
+                    } else {
+                      setRegToken(generateDeviceToken(regPlatform));
+                    }
+                  }}
                 >
-                  <Ionicons name={useCurrentDev ? "checkbox-outline" : "square-outline"} size={20} color={colors.primary} />
+                  <Ionicons name={useCurrentDev ? "checkbox" : "square-outline"} size={20} color={colors.primary} />
                   <Text style={[st.toggleText, { color: colors.foreground }]}>Use this device's token (recommended)</Text>
                 </TouchableOpacity>
-                {!useCurrentDev && (
-                  <TextInput
-                    style={[st.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.foreground }]}
-                    placeholder="SPT-PLATFORM-XXXXXXXX"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={manualToken}
-                    onChangeText={setManualToken}
-                    autoCapitalize="characters"
-                  />
-                )}
+                <View style={[st.tokenBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <Ionicons name="key-outline" size={14} color={colors.textMuted} />
+                  <Text style={[st.tokenText, { color: colors.foreground }]} numberOfLines={1} selectable>{regToken}</Text>
+                </View>
               </View>
+
+              {/* App Token */}
+              <View style={st.field}>
+                <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>App Security Token (auto-generated)</Text>
+                <View style={[st.tokenBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <Ionicons name="shield-checkmark-outline" size={14} color={colors.textMuted} />
+                  <Text style={[st.tokenText, { color: colors.foreground }]} numberOfLines={1} selectable>{regAppToken}</Text>
+                </View>
+              </View>
+
+              {/* Assign Plaza (optional) */}
+              <View style={st.field}>
+                <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Assign Toll Plaza (optional)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+                  <TouchableOpacity
+                    style={[st.plazaChip, { backgroundColor: regPlazaId === "" ? colors.primary + "18" : colors.surface, borderColor: regPlazaId === "" ? colors.primary : colors.border }]}
+                    onPress={() => setRegPlazaId("")}
+                  >
+                    <Text style={[st.plazaChipText, { color: regPlazaId === "" ? colors.primary : colors.textSecondary }]}>None</Text>
+                  </TouchableOpacity>
+                  {MOCK_TOLL_PLAZAS.filter((p) => p.status !== "inactive").map((plaza) => (
+                    <TouchableOpacity
+                      key={plaza.id}
+                      style={[st.plazaChip, { backgroundColor: regPlazaId === plaza.id ? colors.primary + "18" : colors.surface, borderColor: regPlazaId === plaza.id ? colors.primary : colors.border }]}
+                      onPress={() => setRegPlazaId(plaza.id)}
+                    >
+                      <Text style={[st.plazaChipText, { color: regPlazaId === plaza.id ? colors.primary : colors.textSecondary }]} numberOfLines={1}>{plaza.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* Security notice */}
+              <View style={[st.securityNote, { backgroundColor: colors.warning + "10", borderColor: colors.warning + "33", borderRadius: colors.radius }]}>
+                <Ionicons name="shield-outline" size={14} color={colors.warning} />
+                <Text style={[st.securityNoteText, { color: colors.warning }]}>
+                  The Device Token uniquely identifies this physical device. Even if another device has the same model, it will have a different token and will be denied attendance access.
+                </Text>
+              </View>
+
             </ScrollView>
-            <View style={[st.modalFooter, { borderTopColor: colors.border }]}>
+
+            <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
               <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => setShowRegModal(false)}>
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[st.confirmBtn, { backgroundColor: colors.accent }]} onPress={handleRegisterDevice} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={st.confirmText}>Register Device</Text>}
+              <TouchableOpacity
+                style={[st.confirmBtn, { backgroundColor: regName.trim() && regModel.trim() ? colors.accent : colors.muted }]}
+                onPress={handleRegisterDevice}
+                disabled={saving || !regName.trim() || !regModel.trim()}
+              >
+                {saving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <>
+                      <Ionicons name="phone-portrait-outline" size={16} color="#fff" />
+                      <Text style={st.confirmText}>Register Device</Text>
+                    </>
+                }
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* ── Allocate Device Modal ── */}
+      {/* ══════════════ Allocate Device Modal ══════════════ */}
       <Modal visible={showAllocModal} animationType="slide" transparent onRequestClose={() => setShowAllocModal(false)}>
-        <View style={st.modalOverlay}>
-          <View style={[st.modalSheet, { backgroundColor: colors.card }]}>
-            <View style={[st.modalHeader, { borderBottomColor: colors.border }]}>
-              <Text style={[st.modalTitle, { color: colors.foreground }]}>Allocate Device</Text>
+        <View style={st.overlay}>
+          <View style={[st.sheet, { backgroundColor: colors.card }]}>
+            <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="link-outline" size={18} color={colors.accent} />
+                <Text style={[st.sheetTitle, { color: colors.foreground }]}>Allocate Device</Text>
+              </View>
               <TouchableOpacity onPress={() => setShowAllocModal(false)}>
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
-            <ScrollView style={st.modalBody}>
+            <ScrollView style={st.sheetBody} showsVerticalScrollIndicator={false}>
               <Text style={[st.sectionLabel, { color: colors.textSecondary }]}>Select Available Device</Text>
               {availableDevs.length === 0 ? (
-                <View style={[st.noDevices, { backgroundColor: colors.surface, borderRadius: colors.radius }]}>
-                  <Ionicons name="information-circle-outline" size={20} color={colors.textMuted} />
-                  <Text style={[st.noDevicesText, { color: colors.textMuted }]}>No available devices. Register a device first.</Text>
+                <View style={[st.noItems, { backgroundColor: colors.surface, borderRadius: colors.radius }]}>
+                  <Ionicons name="information-circle-outline" size={18} color={colors.textMuted} />
+                  <Text style={[st.noItemsText, { color: colors.textMuted }]}>No available devices. Register a device first.</Text>
                 </View>
               ) : (
                 availableDevs.map((d) => (
@@ -625,10 +895,16 @@ export default function AdminDevicesScreen() {
                     style={[st.selectRow, { backgroundColor: allocDeviceId === d.id ? colors.primary + "18" : colors.surface, borderColor: allocDeviceId === d.id ? colors.primary : colors.border, borderRadius: colors.radius }]}
                     onPress={() => setAllocDeviceId(d.id)}
                   >
-                    <Ionicons name={d.platform === "ios" ? "logo-apple" : "logo-android"} size={18} color={allocDeviceId === d.id ? colors.primary : colors.textMuted} />
+                    <View style={[st.selectIcon, { backgroundColor: (allocDeviceId === d.id ? colors.primary : colors.textMuted) + "20" }]}>
+                      <Ionicons name={d.platform === "ios" ? "logo-apple" : d.platform === "android" ? "logo-android" : "globe-outline"} size={16} color={allocDeviceId === d.id ? colors.primary : colors.textMuted} />
+                    </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={[st.selectMain, { color: colors.foreground }]}>{d.deviceName}</Text>
-                      <Text style={[st.selectSub, { color: colors.textMuted }]}>{d.deviceModel}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Text style={[st.selectId, { color: colors.accent }]}>{d.id}</Text>
+                        <Text style={[st.selectMain, { color: colors.foreground }]}>{d.deviceName}</Text>
+                      </View>
+                      <Text style={[st.selectSub, { color: colors.textMuted }]}>{d.deviceModel} · {d.osVersion}</Text>
+                      <Text style={[st.selectToken, { color: colors.textMuted }]} numberOfLines={1}>Token: {d.deviceToken}</Text>
                     </View>
                     {allocDeviceId === d.id && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
                   </TouchableOpacity>
@@ -644,7 +920,7 @@ export default function AdminDevicesScreen() {
                     style={[st.selectRow, { backgroundColor: allocOpId === op.id ? colors.primary + "18" : colors.surface, borderColor: allocOpId === op.id ? colors.primary : colors.border, borderRadius: colors.radius }]}
                     onPress={() => setAllocOpId(op.id)}
                   >
-                    <Ionicons name="person-circle-outline" size={18} color={allocOpId === op.id ? colors.primary : colors.textMuted} />
+                    <Ionicons name="person-circle-outline" size={20} color={allocOpId === op.id ? colors.primary : colors.textMuted} />
                     <View style={{ flex: 1 }}>
                       <Text style={[st.selectMain, { color: colors.foreground }]}>{op.name}</Text>
                       <Text style={[st.selectSub, { color: colors.textMuted }]}>{op.id} · {plaza?.name ?? op.plazaName}</Text>
@@ -654,20 +930,29 @@ export default function AdminDevicesScreen() {
                 );
               })}
 
-              {allocOpId && allocDeviceId && (
-                <View style={[st.allocSummary, { backgroundColor: colors.success + "12", borderColor: colors.success + "44", borderRadius: colors.radius }]}>
-                  <Ionicons name="checkmark-circle-outline" size={18} color={colors.success} />
-                  <Text style={[st.allocSummaryText, { color: colors.success }]}>
-                    "{devices.find((d) => d.id === allocDeviceId)?.deviceName}" → {MOCK_OPERATORS.find((o) => o.id === allocOpId)?.name}
-                  </Text>
-                </View>
-              )}
+              {allocOpId && allocDeviceId && (() => {
+                const dev = devices.find((d) => d.id === allocDeviceId);
+                const op  = MOCK_OPERATORS.find((o) => o.id === allocOpId);
+                return (
+                  <View style={[st.allocSummary, { backgroundColor: colors.success + "12", borderColor: colors.success + "44", borderRadius: colors.radius }]}>
+                    <Ionicons name="shield-checkmark-outline" size={16} color={colors.success} />
+                    <Text style={[st.allocSummaryText, { color: colors.success }]}>
+                      {dev?.id} ({dev?.deviceName}) → {op?.name}
+                      {"\n"}Verified by: {dev?.deviceToken.slice(0, 22)}…
+                    </Text>
+                  </View>
+                );
+              })()}
             </ScrollView>
-            <View style={[st.modalFooter, { borderTopColor: colors.border }]}>
+            <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
               <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => setShowAllocModal(false)}>
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[st.confirmBtn, { backgroundColor: colors.accent }]} onPress={handleAllocate} disabled={saving}>
+              <TouchableOpacity
+                style={[st.confirmBtn, { backgroundColor: allocDeviceId && allocOpId ? colors.accent : colors.muted }]}
+                onPress={handleAllocate}
+                disabled={saving || !allocDeviceId || !allocOpId}
+              >
                 {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={st.confirmText}>Allocate</Text>}
               </TouchableOpacity>
             </View>
@@ -675,24 +960,19 @@ export default function AdminDevicesScreen() {
         </View>
       </Modal>
 
-      {/* ── Action Modal (Block/Replace/Reassign) ── */}
+      {/* ══════════════ Action Modal ══════════════ */}
       <Modal visible={!!actionModal} animationType="fade" transparent onRequestClose={() => setActionModal(null)}>
-        <View style={st.modalOverlay}>
-          <View style={[st.modalSheet, { backgroundColor: colors.card }]}>
-            <View style={[st.modalHeader, { borderBottomColor: colors.border }]}>
-              <Text style={[st.modalTitle, { color: colors.foreground }]}>
-                {actionModal?.type === "block_device" ? "Block Device"
-                  : actionModal?.type === "block_alloc" ? "Block Allocation"
-                  : actionModal?.type === "replace"     ? "Replace Device"
-                  : "Reassign Device"}
-              </Text>
+        <View style={st.overlay}>
+          <View style={[st.confirmSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
+              <Text style={[st.sheetTitle, { color: colors.foreground }]}>{actionTitle}</Text>
               <TouchableOpacity onPress={() => setActionModal(null)}>
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
-            <ScrollView style={st.modalBody}>
+            <View style={{ padding: 20, gap: 14 }}>
               {(actionModal?.type === "block_device" || actionModal?.type === "block_alloc") && (
-                <View style={{ gap: 8 }}>
+                <>
                   <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Block Reason (optional)</Text>
                   <TextInput
                     style={[st.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.foreground, height: 80, textAlignVertical: "top", paddingTop: 10 }]}
@@ -708,33 +988,43 @@ export default function AdminDevicesScreen() {
                       This will block all attendance operations for the assigned operator.
                     </Text>
                   </View>
+                </>
+              )}
+              {actionModal?.type === "deactivate" && (
+                <View style={[st.warnBanner, { backgroundColor: actionModal.extra === "unblock" ? colors.success + "12" : colors.warning + "12", borderColor: actionModal.extra === "unblock" ? colors.success + "33" : colors.warning + "33", borderRadius: colors.radius }]}>
+                  <Ionicons name={actionModal.extra === "unblock" ? "checkmark-circle-outline" : "warning-outline"} size={14} color={actionModal.extra === "unblock" ? colors.success : colors.warning} />
+                  <Text style={[st.warnText, { color: actionModal.extra === "unblock" ? colors.success : colors.warning }]}>
+                    {actionModal.extra === "unblock"
+                      ? "Device will be unblocked and set back to Available."
+                      : "Device will be marked Inactive and removed from circulation."}
+                  </Text>
                 </View>
               )}
               {actionModal?.type === "replace" && (
-                <View style={{ gap: 10 }}>
+                <>
                   <Text style={[st.sectionLabel, { color: colors.textSecondary }]}>Select Replacement Device</Text>
                   {availableDevs.length === 0 ? (
-                    <Text style={[{ color: colors.textMuted, textAlign: "center" }]}>No available devices to replace with.</Text>
-                  ) : (
-                    availableDevs.map((d) => (
-                      <TouchableOpacity
-                        key={d.id}
-                        style={[st.selectRow, { backgroundColor: replaceDevId === d.id ? colors.warning + "18" : colors.surface, borderColor: replaceDevId === d.id ? colors.warning : colors.border, borderRadius: colors.radius }]}
-                        onPress={() => setReplaceDevId(d.id)}
-                      >
-                        <Ionicons name="phone-portrait-outline" size={18} color={replaceDevId === d.id ? colors.warning : colors.textMuted} />
-                        <View style={{ flex: 1 }}>
+                    <Text style={[{ color: colors.textMuted, textAlign: "center" }]}>No available devices.</Text>
+                  ) : availableDevs.map((d) => (
+                    <TouchableOpacity
+                      key={d.id}
+                      style={[st.selectRow, { backgroundColor: replaceDevId === d.id ? colors.warning + "18" : colors.surface, borderColor: replaceDevId === d.id ? colors.warning : colors.border, borderRadius: colors.radius }]}
+                      onPress={() => setReplaceDevId(d.id)}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", gap: 6 }}>
+                          <Text style={[st.selectId, { color: colors.accent }]}>{d.id}</Text>
                           <Text style={[st.selectMain, { color: colors.foreground }]}>{d.deviceName}</Text>
-                          <Text style={[st.selectSub, { color: colors.textMuted }]}>{d.deviceModel}</Text>
                         </View>
-                        {replaceDevId === d.id && <Ionicons name="checkmark-circle" size={18} color={colors.warning} />}
-                      </TouchableOpacity>
-                    ))
-                  )}
-                </View>
+                        <Text style={[st.selectSub, { color: colors.textMuted }]}>{d.deviceModel}</Text>
+                      </View>
+                      {replaceDevId === d.id && <Ionicons name="checkmark-circle" size={18} color={colors.warning} />}
+                    </TouchableOpacity>
+                  ))}
+                </>
               )}
               {actionModal?.type === "reassign" && (
-                <View style={{ gap: 10 }}>
+                <>
                   <Text style={[st.sectionLabel, { color: colors.textSecondary }]}>Select New Operator</Text>
                   {activeOperators.map((op) => (
                     <TouchableOpacity
@@ -750,19 +1040,85 @@ export default function AdminDevicesScreen() {
                       {reassignOpId === op.id && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
                     </TouchableOpacity>
                   ))}
-                </View>
+                </>
               )}
-            </ScrollView>
-            <View style={[st.modalFooter, { borderTopColor: colors.border }]}>
+            </View>
+            <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
               <TouchableOpacity style={[st.cancelBtn, { borderColor: colors.border }]} onPress={() => setActionModal(null)}>
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[st.confirmBtn, { backgroundColor: actionModal?.type?.startsWith("block") ? colors.destructive : colors.accent }]}
+                style={[st.confirmBtn, { backgroundColor: actionModal?.type?.startsWith("block") ? colors.destructive : actionModal?.extra === "unblock" ? colors.success : colors.accent }]}
                 onPress={handleActionSubmit}
                 disabled={saving}
               >
                 {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={st.confirmText}>Confirm</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ══════════════ Allocation History Modal ══════════════ */}
+      <Modal visible={!!historyDevice} animationType="slide" transparent onRequestClose={() => setHistoryDevice(null)}>
+        <View style={st.overlay}>
+          <View style={[st.sheet, { backgroundColor: colors.card }]}>
+            <View style={[st.sheetHeader, { borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="time-outline" size={18} color={colors.accent} />
+                <Text style={[st.sheetTitle, { color: colors.foreground }]}>Allocation History</Text>
+              </View>
+              <TouchableOpacity onPress={() => setHistoryDevice(null)}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={st.sheetBody} showsVerticalScrollIndicator={false}>
+              {historyDevice && (
+                <View style={[st.histDeviceBadge, { backgroundColor: colors.primary + "10", borderRadius: colors.radius }]}>
+                  <Text style={[st.histDeviceId, { color: colors.accent }]}>{historyDevice.id}</Text>
+                  <Text style={[st.histDeviceName, { color: colors.foreground }]}>{historyDevice.deviceName}</Text>
+                  <Text style={[st.histDeviceModel, { color: colors.textMuted }]}>{historyDevice.deviceModel} · {historyDevice.osVersion}</Text>
+                </View>
+              )}
+              {(historyDevice?.allocationHistory ?? []).length === 0 ? (
+                <View style={st.empty}>
+                  <Ionicons name="time-outline" size={32} color={colors.textMuted} />
+                  <Text style={[st.emptyText, { color: colors.textMuted }]}>No allocation history</Text>
+                </View>
+              ) : (
+                [...(historyDevice?.allocationHistory ?? [])].reverse().map((entry: AllocationHistoryEntry, i) => (
+                  <View key={entry.allocationId} style={[st.histEntry, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
+                    <View style={st.histEntryHeader}>
+                      <View style={[st.histBullet, { backgroundColor: entry.endedAt ? colors.textMuted + "40" : colors.success + "40" }]}>
+                        <View style={[st.histBulletInner, { backgroundColor: entry.endedAt ? colors.textMuted : colors.success }]} />
+                      </View>
+                      <Text style={[st.histSeq, { color: colors.textMuted }]}>#{(historyDevice?.allocationHistory.length ?? 0) - i}</Text>
+                      <View style={[st.histStatusPill, { backgroundColor: entry.endedAt ? colors.textMuted + "18" : colors.success + "18" }]}>
+                        <Text style={[st.histStatusText, { color: entry.endedAt ? colors.textMuted : colors.success }]}>
+                          {entry.endedAt ? "Ended" : "Active"}
+                        </Text>
+                      </View>
+                    </View>
+                    {[
+                      { label: "Operator",      value: `${entry.operatorName} (${entry.operatorId})` },
+                      { label: "Plaza",         value: entry.plazaName },
+                      { label: "Allocated At",  value: entry.allocatedAt },
+                      { label: "Allocated By",  value: entry.allocatedBy },
+                      ...(entry.endedAt    ? [{ label: "Ended At",   value: new Date(entry.endedAt).toLocaleString("en-IN") }] : []),
+                      ...(entry.endReason  ? [{ label: "End Reason", value: entry.endReason }] : []),
+                    ].map(({ label, value }) => (
+                      <View key={label} style={[st.histRow, { borderTopColor: colors.border }]}>
+                        <Text style={[st.histLabel, { color: colors.textMuted }]}>{label}</Text>
+                        <Text style={[st.histValue, { color: colors.foreground }]} numberOfLines={2}>{value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+            <View style={[st.sheetFooter, { borderTopColor: colors.border }]}>
+              <TouchableOpacity style={[st.confirmBtn, { backgroundColor: colors.primary, flex: 1 }]} onPress={() => setHistoryDevice(null)}>
+                <Text style={st.confirmText}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -776,8 +1132,10 @@ export default function AdminDevicesScreen() {
 const st = StyleSheet.create({
   root: { flex: 1 },
   scroll: { paddingHorizontal: 16, gap: 12 },
+  successBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 10, borderWidth: 1 },
+  successText: { fontSize: 13, fontWeight: "600", flex: 1 },
   kpiRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
-  kpiCard: { flex: 1, borderWidth: 1, borderRadius: 10, padding: 10, alignItems: "center", gap: 2 },
+  kpiCard: { flex: 1, borderWidth: 1, padding: 10, alignItems: "center", gap: 2 },
   kpiValue: { fontSize: 20, fontWeight: "800" },
   kpiLabel: { fontSize: 10, fontWeight: "600" },
   tabBar: { flexDirection: "row", borderWidth: 1, borderRadius: 10, overflow: "hidden", marginBottom: 8 },
@@ -791,49 +1149,97 @@ const st = StyleSheet.create({
   addBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
   empty: { alignItems: "center", paddingVertical: 40, gap: 8 },
   emptyText: { fontSize: 14 },
-  /* Modal */
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
-  modalSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "85%", overflow: "hidden" },
-  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
-  modalTitle: { fontSize: 17, fontWeight: "700" },
-  modalBody: { paddingHorizontal: 20, paddingVertical: 16, flexGrow: 0 },
-  modalFooter: { flexDirection: "row", gap: 12, paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1 },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "92%", overflow: "hidden" },
+  confirmSheet: { margin: 16, borderRadius: 16, borderWidth: 1, maxHeight: "85%", overflow: "hidden" },
+  sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
+  sheetTitle: { fontSize: 17, fontWeight: "700" },
+  sheetBody: { paddingHorizontal: 20, paddingVertical: 16, flexGrow: 0 },
+  sheetFooter: { flexDirection: "row", gap: 12, paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1 },
+  idBanner: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 16, gap: 2 },
+  idBannerRow: { flexDirection: "row", alignItems: "center", gap: 0 },
+  idBannerItem: { flex: 1, gap: 2 },
+  idBannerDivider: { width: 1, height: 32, marginHorizontal: 12 },
+  idBannerLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 0.3 },
+  idBannerValue: { fontSize: 14, fontWeight: "700" },
   field: { marginBottom: 14 },
   fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: 6 },
+  fieldLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14 },
   platformRow: { flexDirection: "row", gap: 8 },
   platformPill: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
   platformText: { fontSize: 13, fontWeight: "600" },
-  toggleRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 10, padding: 12 },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
   toggleText: { flex: 1, fontSize: 13 },
+  tokenBox: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 10, padding: 12 },
+  tokenText: { flex: 1, fontSize: 12, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
+  plazaChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 99, borderWidth: 1 },
+  plazaChipText: { fontSize: 12, fontWeight: "600" },
+  securityNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderWidth: 1, marginBottom: 8 },
+  securityNoteText: { flex: 1, fontSize: 11, lineHeight: 17 },
   sectionLabel: { fontSize: 12, fontWeight: "700", letterSpacing: 0.5, marginBottom: 8 },
+  noItems: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12 },
+  noItemsText: { flex: 1, fontSize: 13 },
   selectRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderWidth: 1, marginBottom: 8 },
+  selectIcon: { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  selectId: { fontSize: 11, fontWeight: "800" },
   selectMain: { fontSize: 14, fontWeight: "600" },
   selectSub: { fontSize: 12 },
-  allocSummary: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderWidth: 1, marginTop: 8 },
-  allocSummaryText: { flex: 1, fontSize: 13, fontWeight: "600" },
-  noDevices: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12 },
-  noDevicesText: { flex: 1, fontSize: 13 },
+  selectToken: { fontSize: 10, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
+  allocSummary: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderWidth: 1, marginTop: 8 },
+  allocSummaryText: { flex: 1, fontSize: 12, fontWeight: "600", lineHeight: 18 },
   warnBanner: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 10, borderWidth: 1 },
   warnText: { flex: 1, fontSize: 12, lineHeight: 18 },
   cancelBtn: { flex: 1, height: 46, borderWidth: 1, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   cancelText: { fontSize: 14, fontWeight: "600" },
-  confirmBtn: { flex: 1, height: 46, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  confirmBtn: { flex: 1, height: 46, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   confirmText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  histDeviceBadge: { padding: 14, marginBottom: 14, gap: 2 },
+  histDeviceId: { fontSize: 12, fontWeight: "800" },
+  histDeviceName: { fontSize: 15, fontWeight: "700" },
+  histDeviceModel: { fontSize: 12 },
+  histEntry: { borderWidth: 1, marginBottom: 10, padding: 12, gap: 0 },
+  histEntryHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  histBullet: { width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  histBulletInner: { width: 8, height: 8, borderRadius: 4 },
+  histSeq: { fontSize: 11, fontWeight: "700" },
+  histStatusPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99 },
+  histStatusText: { fontSize: 10, fontWeight: "700" },
+  histRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderTopWidth: 1, gap: 10 },
+  histLabel: { fontSize: 11, flex: 1 },
+  histValue: { fontSize: 12, fontWeight: "600", flex: 2, textAlign: "right" },
 });
 
 const rc = StyleSheet.create({
   card: { borderWidth: 1, marginBottom: 10, overflow: "hidden" },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
-  platformIcon: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  info: { flex: 1, gap: 2 },
-  name: { fontSize: 14, fontWeight: "700" },
+  headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, padding: 14 },
+  platformIcon: { width: 44, height: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", marginTop: 2 },
+  info: { flex: 1, gap: 3 },
+  nameLine: { flexDirection: "row", alignItems: "center", gap: 6 },
+  devId: { fontSize: 11, fontWeight: "800" },
+  name: { fontSize: 14, fontWeight: "700", flex: 1 },
   model: { fontSize: 12 },
-  token: { fontSize: 10 },
-  statusCol: { alignItems: "flex-end", gap: 4 },
+  token: { fontSize: 10, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
+  statusCol: { alignItems: "flex-end", gap: 6 },
   statusPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
   statusText: { fontSize: 11, fontWeight: "600" },
-  date: { fontSize: 10 },
+  healthDot: { width: 8, height: 8, borderRadius: 4 },
+  infoGrid: { flexDirection: "row", borderTopWidth: 1, paddingVertical: 10 },
+  infoCell: { flex: 1, alignItems: "center", gap: 1 },
+  infoCellDivider: { width: 1 },
+  infoLabel: { fontSize: 9, fontWeight: "600", letterSpacing: 0.2 },
+  infoValue: { fontSize: 11, fontWeight: "700", textAlign: "center" },
+  infoSub: { fontSize: 9, textAlign: "center" },
+  assignRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderTopWidth: 1, flexWrap: "nowrap" },
+  assignText: { fontSize: 12, fontWeight: "600" },
+  assignSep: { fontSize: 12 },
+  assignSub: { fontSize: 12, flex: 1 },
+  histBtn: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 99, borderWidth: 1, marginLeft: "auto" },
+  histBtnText: { fontSize: 10, fontWeight: "700" },
+  expandRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1 },
+  expandLabel: { flex: 1, fontSize: 11 },
+  tokenExpanded: { paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1 },
+  tokenFull: { fontSize: 11, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
   actions: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
   btn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
   btnText: { fontSize: 12, fontWeight: "600" },
@@ -853,6 +1259,8 @@ const ac = StyleSheet.create({
   detailItem: { width: "46%", flexDirection: "row", alignItems: "flex-start", gap: 6 },
   detailLabel: { fontSize: 10, fontWeight: "600" },
   detailValue: { fontSize: 12, fontWeight: "500" },
+  deviceBadge: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1 },
+  deviceBadgeText: { fontSize: 11 },
   actions: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
   btn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
   btnText: { fontSize: 12, fontWeight: "600" },
