@@ -89,6 +89,11 @@ function DeviceRegistryCard({
             <Text style={[rc.name, { color: colors.foreground }]} numberOfLines={1}>{device.deviceName}</Text>
           </View>
           <Text style={[rc.model, { color: colors.textSecondary }]}>{device.deviceModel} · {device.osVersion}</Text>
+          {device.imeiNumber && device.imeiNumber !== "N/A" && (
+            <Text style={[rc.imei, { color: colors.textMuted }]} numberOfLines={1} selectable>
+              IMEI: {device.imeiNumber}
+            </Text>
+          )}
           <Text style={[rc.token, { color: colors.textMuted }]} numberOfLines={1} selectable>
             Token: {device.deviceToken}
           </Text>
@@ -307,6 +312,7 @@ export default function AdminDevicesScreen() {
   const [showRegModal,   setShowRegModal]   = useState(false);
   const [regName,        setRegName]        = useState("");
   const [regModel,       setRegModel]       = useState("");
+  const [regImei,        setRegImei]        = useState("");
   const [regOsVersion,   setRegOsVersion]   = useState("");
   const [regPlatform,    setRegPlatform]    = useState<DevicePlatform>("android");
   const [regToken,       setRegToken]       = useState("");
@@ -367,6 +373,7 @@ export default function AdminDevicesScreen() {
     setRegAppToken(generateAppToken());
     setRegName("");
     setRegModel("");
+    setRegImei("");
     setRegPlazaId("");
     setShowRegModal(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -391,6 +398,7 @@ export default function AdminDevicesScreen() {
       await registerDevice({
         deviceName:        regName.trim(),
         deviceModel:       regModel.trim(),
+        imeiNumber:        regPlatform === "web" ? "N/A" : regImei.trim() || "N/A",
         platform:          regPlatform,
         osVersion:         regOsVersion.trim() || getDefaultOsVersion(regPlatform),
         deviceToken:       regToken,
@@ -740,6 +748,34 @@ export default function AdminDevicesScreen() {
                   onChangeText={setRegModel}
                 />
               </View>
+
+              {/* IMEI Number */}
+              {regPlatform !== "web" && (
+                <View style={st.field}>
+                  <View style={st.fieldLabelRow}>
+                    <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>IMEI Number</Text>
+                    <Text style={[st.fieldHint, { color: colors.textMuted }]}>15 digits</Text>
+                  </View>
+                  <View style={[st.imeiInputRow, { backgroundColor: colors.surface, borderColor: regImei.trim() && !/^\d{15}$/.test(regImei.trim()) ? colors.destructive : colors.border }]}>
+                    <Ionicons name="hardware-chip-outline" size={15} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <TextInput
+                      style={[st.imeiInput, { color: colors.foreground }]}
+                      placeholder="e.g. 356938035643809"
+                      placeholderTextColor={colors.mutedForeground}
+                      value={regImei}
+                      onChangeText={(t) => setRegImei(t.replace(/\D/g, "").slice(0, 15))}
+                      keyboardType="number-pad"
+                      maxLength={15}
+                    />
+                    {regImei.trim().length === 15 && (
+                      <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                    )}
+                  </View>
+                  {regImei.trim().length > 0 && regImei.trim().length < 15 && (
+                    <Text style={[st.imeiHint, { color: colors.textMuted }]}>{regImei.trim().length}/15 digits</Text>
+                  )}
+                </View>
+              )}
 
               {/* Platform */}
               <View style={st.field}>
@@ -1164,8 +1200,12 @@ const st = StyleSheet.create({
   idBannerValue: { fontSize: 14, fontWeight: "700" },
   field: { marginBottom: 14 },
   fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: 6 },
+  fieldHint: { fontSize: 11, fontWeight: "400" },
   fieldLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14 },
+  imeiInputRow: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, height: 48 },
+  imeiInput: { flex: 1, fontSize: 14, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
+  imeiHint: { fontSize: 11, marginTop: 4, textAlign: "right" },
   platformRow: { flexDirection: "row", gap: 8 },
   platformPill: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 8, borderWidth: 1 },
   platformText: { fontSize: 13, fontWeight: "600" },
@@ -1219,6 +1259,7 @@ const rc = StyleSheet.create({
   devId: { fontSize: 11, fontWeight: "800" },
   name: { fontSize: 14, fontWeight: "700", flex: 1 },
   model: { fontSize: 12 },
+  imei: { fontSize: 10, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
   token: { fontSize: 10, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
   statusCol: { alignItems: "flex-end", gap: 6 },
   statusPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },

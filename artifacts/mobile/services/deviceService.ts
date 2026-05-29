@@ -32,6 +32,7 @@ export interface RegisteredDevice {
   /* Hardware Info */
   deviceName: string;
   deviceModel: string;
+  imeiNumber: string;          // 15-digit IMEI or "N/A" for web
   platform: DevicePlatform;
   osVersion: string;           // e.g. "Android 13", "iOS 17.2"
 
@@ -172,6 +173,7 @@ async function saveRegisteredDevices(devices: RegisteredDevice[]): Promise<void>
 export interface RegisterDeviceInput {
   deviceName: string;
   deviceModel: string;
+  imeiNumber: string;
   platform: DevicePlatform;
   osVersion: string;
   deviceToken: string;
@@ -188,6 +190,7 @@ export async function registerDevice(input: RegisterDeviceInput): Promise<Regist
     appToken:             generateAppToken(),
     deviceName:           input.deviceName,
     deviceModel:          input.deviceModel,
+    imeiNumber:           input.imeiNumber || "N/A",
     platform:             input.platform,
     osVersion:            input.osVersion,
     registrationDate:     nowDate(),
@@ -385,6 +388,7 @@ export async function initDemoData(): Promise<void> {
       appToken: "APP-PRIM-DEMO-0001",
       deviceName: "Primary Field Device",
       deviceModel: platform === "ios" ? "iPhone 14" : platform === "android" ? "Android Phone" : "Web Browser",
+      imeiNumber: platform === "web" ? "N/A" : "356938035643809",
       platform,
       osVersion,
       registrationDate: "2024-01-15",
@@ -415,6 +419,7 @@ export async function initDemoData(): Promise<void> {
       appToken: "APP-SPAR-DEMO-0002",
       deviceName: "Spare Device Alpha",
       deviceModel: "Samsung Galaxy A54",
+      imeiNumber: "490154203237518",
       platform: "android",
       osVersion: "Android 13",
       registrationDate: "2024-03-01",
@@ -435,6 +440,7 @@ export async function initDemoData(): Promise<void> {
       appToken: "APP-SPAR-DEMO-0003",
       deviceName: "Spare Device Beta",
       deviceModel: "Realme GT Neo 5",
+      imeiNumber: "013012004678903",
       platform: "android",
       osVersion: "Android 14",
       registrationDate: "2024-04-10",
@@ -455,6 +461,7 @@ export async function initDemoData(): Promise<void> {
       appToken: "APP-BLKD-DEMO-0004",
       deviceName: "Blocked Device",
       deviceModel: "OnePlus 11",
+      imeiNumber: "352099001761481",
       platform: "android",
       osVersion: "Android 13",
       registrationDate: "2024-02-15",
