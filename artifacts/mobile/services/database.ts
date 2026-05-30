@@ -828,6 +828,35 @@ export async function getAttendanceForCSV(): Promise<AttendanceRecord[]> {
   );
 }
 
+export async function purgeAttendanceSynced(): Promise<{ purgedAttendance: number; purgedImages: number }> {
+  const today = new Date().toISOString().split("T")[0];
+  if (IS_WEB) {
+    const count = webStore.attendance.filter(
+      (a) => a.syncStatus === "synced" && a.date < today
+    ).length;
+    webStore.attendance = webStore.attendance.filter(
+      (a) => !(a.syncStatus === "synced" && a.date < today)
+    );
+    return { purgedAttendance: count, purgedImages: 0 };
+  }
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) as c FROM attendance WHERE syncStatus = 'synced' AND date < ?",
+    [today]
+  );
+  const count = row?.c ?? 0;
+  await db.runAsync(
+    "DELETE FROM attendance WHERE syncStatus = 'synced' AND date < ?",
+    [today]
+  );
+  const imgRow = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) as c FROM face_images WHERE captured = 1"
+  );
+  const imgCount = imgRow?.c ?? 0;
+  await db.execAsync("DELETE FROM face_images WHERE captured = 1");
+  return { purgedAttendance: count, purgedImages: imgCount };
+}
+
 export async function getWeeklyAttendance(): Promise<{ day: string; count: number }[]> {
   if (IS_WEB) return web_getWeeklyAttendance();
   const db = await getDb();

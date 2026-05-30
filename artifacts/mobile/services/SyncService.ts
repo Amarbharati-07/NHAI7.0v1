@@ -2,10 +2,13 @@ import NetInfo from "@react-native-community/netinfo";
 import {
   getSyncQueue,
   markSynced,
-  clearSyncedRecords,
   getWorkerById,
   getAttendanceById,
 } from "./database";
+import { fetchAwsStatus, runPurge, getLastPurge, type AwsStatus } from "./AwsSyncService";
+import { getApiBase } from "./apiConfig";
+
+export type { AwsStatus };
 
 export interface SyncState {
   isOnline: boolean;
@@ -13,25 +16,25 @@ export interface SyncState {
   pendingCount: number;
   lastSyncedAt: string | null;
   lastError: string | null;
+  awsUploaded: boolean;
+  lastS3Key: string | null;
+  awsStatus: AwsStatus | null;
+  isPurging: boolean;
+  lastPurgedAt: string | null;
+  purgedTotal: number;
 }
 
 export interface SyncResult {
   synced: number;
   errors: number;
+  awsUploaded: boolean;
+  s3Key?: string;
+  purgedAttendance: number;
 }
 
 type SyncListener = (state: SyncState) => void;
 
-function getApiBaseUrl(): string {
-  if (process.env["EXPO_PUBLIC_API_URL"]) return process.env["EXPO_PUBLIC_API_URL"]!;
-  const domain = process.env["EXPO_PUBLIC_DOMAIN"];
-  if (domain) return `https://${domain}:3000/api`;
-  return "http://localhost:3000/api";
-}
-
-export function getApiBase(): string {
-  return getApiBaseUrl();
-}
+export { getApiBase };
 
 class SyncService {
   private listeners = new Set<SyncListener>();
@@ -41,6 +44,12 @@ class SyncService {
     pendingCount: 0,
     lastSyncedAt: null,
     lastError: null,
+    awsUploaded: false,
+    lastS3Key: null,
+    awsStatus: null,
+    isPurging: false,
+    lastPurgedAt: null,
+    purgedTotal: 0,
   };
   private netInfoUnsub: (() => void) | null = null;
 
@@ -48,7 +57,10 @@ class SyncService {
     NetInfo.fetch().then((s) => {
       const online = !!s.isConnected && !!s.isInternetReachable;
       this.setState({ isOnline: online });
-      if (online) this.sync();
+      if (online) {
+        this.loadAwsStatus();
+        this.sync();
+      }
     });
 
     this.netInfoUnsub = NetInfo.addEventListener((s) => {
@@ -56,11 +68,13 @@ class SyncService {
       const online = !!s.isConnected && !!s.isInternetReachable;
       this.setState({ isOnline: online });
       if (!wasOnline && online) {
+        this.loadAwsStatus();
         this.sync();
       }
     });
 
     this.refreshPendingCount();
+    this.loadPersistedPurgeStats();
   }
 
   stop() {
@@ -78,11 +92,25 @@ class SyncService {
     return this.state;
   }
 
+  async loadAwsStatus() {
+    try {
+      const awsStatus = await fetchAwsStatus();
+      this.setState({ awsStatus });
+    } catch {}
+  }
+
   async refreshPendingCount() {
     try {
       const queue = await getSyncQueue();
       const pending = queue.filter((r) => r.status === "pending").length;
       this.setState({ pendingCount: pending });
+    } catch {}
+  }
+
+  private async loadPersistedPurgeStats() {
+    try {
+      const { lastPurgedAt, purgedTotal } = await getLastPurge();
+      this.setState({ lastPurgedAt, purgedTotal });
     } catch {}
   }
 
@@ -92,8 +120,8 @@ class SyncService {
   }
 
   async sync(): Promise<SyncResult> {
-    if (this.state.isSyncing) return { synced: 0, errors: 0 };
-    if (!this.state.isOnline) return { synced: 0, errors: 0 };
+    if (this.state.isSyncing) return { synced: 0, errors: 0, awsUploaded: false, purgedAttendance: 0 };
+    if (!this.state.isOnline) return { synced: 0, errors: 0, awsUploaded: false, purgedAttendance: 0 };
 
     this.setState({ isSyncing: true, lastError: null });
 
@@ -105,7 +133,7 @@ class SyncService {
 
       if (pending.length === 0) {
         this.setState({ isSyncing: false });
-        return { synced: 0, errors: 0 };
+        return { synced: 0, errors: 0, awsUploaded: false, purgedAttendance: 0 };
       }
 
       const workers: object[] = [];
@@ -135,37 +163,69 @@ class SyncService {
         }
       }
 
+      const firstAttendance = attendance[0] as any;
+      const firstWorker = workers[0] as any;
+
       const response = await fetch(`${getApiBaseUrl()}/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workers, attendance }),
-        signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({
+          workers,
+          attendance,
+          deviceToken: firstAttendance?.deviceToken ?? firstWorker?.deviceToken ?? "",
+          plazaId: firstAttendance?.plazaId ?? firstWorker?.plazaId ?? "",
+        }),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}`);
       }
 
+      const responseData = await response.json() as {
+        success: boolean;
+        synced: { workers: number; attendance: number };
+        errors: string[];
+        aws?: { uploaded: boolean; s3Key?: string; bucket?: string; error?: string };
+      };
+
       for (const rec of pending) {
         await markSynced(rec.id!);
       }
 
-      await clearSyncedRecords();
-
+      const awsUploaded = responseData.aws?.uploaded === true;
+      const lastS3Key = responseData.aws?.s3Key ?? null;
       const now = new Date().toISOString();
+
       this.setState({
         isSyncing: false,
         pendingCount: 0,
         lastSyncedAt: now,
         lastError: null,
+        awsUploaded,
+        lastS3Key,
       });
 
-      return { synced: pending.length, errors: 0 };
+      this.setState({ isPurging: true });
+      let purgedAttendance = 0;
+      try {
+        const purgeResult = await runPurge();
+        purgedAttendance = purgeResult.purgedAttendance;
+        this.setState({
+          isPurging: false,
+          lastPurgedAt: purgeResult.purgedAt,
+          purgedTotal: this.state.purgedTotal + purgeResult.purgedAttendance,
+        });
+      } catch {
+        this.setState({ isPurging: false });
+      }
+
+      return { synced: pending.length, errors: 0, awsUploaded, s3Key: lastS3Key ?? undefined, purgedAttendance };
     } catch (e) {
       const msg = (e as Error).message ?? "Unknown error";
       this.setState({ isSyncing: false, lastError: msg });
       await this.refreshPendingCount();
-      return { synced: 0, errors: 1 };
+      return { synced: 0, errors: 1, awsUploaded: false, purgedAttendance: 0 };
     }
   }
 }
