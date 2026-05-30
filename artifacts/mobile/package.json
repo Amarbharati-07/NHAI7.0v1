@@ -65,7 +65,6 @@
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-react-native": "^1.0.0",
     "expo-camera": "~16.0.18",
-    "expo-dev-client": "~6.0.21",
     "expo-document-picker": "^56.0.4",
     "expo-file-system": "^56.0.7",
     "expo-gl": "^56.0.5",
