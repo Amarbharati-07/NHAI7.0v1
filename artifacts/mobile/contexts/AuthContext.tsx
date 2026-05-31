@@ -4,106 +4,146 @@ import {
   getOrCreateDeviceToken,
   verifyDevice,
   initDemoData,
-  type DeviceVerifyReason,
 } from "@/services/deviceService";
+import { loginWithApi } from "@/services/authApi";
+import { isApiConfigured } from "@/services/apiConfig";
+import { bootstrapOperatorOfflineData } from "@/services/offlineBootstrapService";
+import {
+  saveOfflineCredentials,
+  verifyOfflineCredentials,
+  updateOfflineProfile,
+} from "@/services/offlineAuthService";
+import { syncService } from "@/services/SyncService";
+import type { AuthUser } from "@/types/auth";
 
-export interface AuthUser {
-  id: number;
-  userId: string;
-  name: string;
-  role: "admin" | "operator";
-  /* Operator-only device context */
-  plazaId?: string;
-  plazaName?: string;
-  allocatedDeviceId?: string;
-  deviceToken?: string;
-  isDeviceAuthorized?: boolean;
-  deviceVerifyReason?: DeviceVerifyReason;
-}
+export type { AuthUser };
 
 interface AuthContextType {
   user: AuthUser | null;
   isLoading: boolean;
-  login: (userId: string, password: string) => Promise<boolean>;
+  login: (userId: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => Promise<void>;
   refreshDeviceAuth: () => Promise<void>;
 }
 
-const VALID_USERS = [
-  { id: 1, userId: "ADMIN001", password: "admin123", name: "System Admin",  role: "admin"    as const },
-  { id: 2, userId: "OPR001",   password: "opr123",   name: "John Operator", role: "operator" as const },
-];
-
 async function buildOperatorContext(userId: string): Promise<Partial<AuthUser>> {
-  const result     = await verifyDevice(userId);
+  const result = await verifyDevice(userId);
   const deviceToken = await getOrCreateDeviceToken();
   return {
-    plazaId:             result.plazaId,
-    plazaName:           result.plazaName,
-    allocatedDeviceId:   result.deviceId,
+    plazaId: result.plazaId,
+    plazaName: result.plazaName,
+    allocatedDeviceId: result.deviceId,
     deviceToken,
-    isDeviceAuthorized:  result.authorized,
-    deviceVerifyReason:  result.reason,
+    isDeviceAuthorized: result.authorized,
+    deviceVerifyReason: result.reason,
   };
+}
+
+async function finalizeOperatorUser(base: AuthUser): Promise<AuthUser> {
+  const bootstrapped = await bootstrapOperatorOfflineData(base.userId);
+  const merged: AuthUser = bootstrapped ? { ...base, ...bootstrapped } : base;
+  const ctx = await buildOperatorContext(merged.userId);
+  return { ...merged, ...ctx };
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
-  login: async () => false,
+  login: async () => ({ ok: false }),
   logout: async () => {},
   refreshDeviceAuth: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser]         = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
-        await initDemoData();
+        if (!isApiConfigured()) {
+          await initDemoData();
+        }
         const stored = await AsyncStorage.getItem("@spectra_user");
         if (stored) {
           const u: AuthUser = JSON.parse(stored);
           if (u.role === "operator") {
-            const ctx = await buildOperatorContext(u.userId);
-            const updated = { ...u, ...ctx };
+            let authUser = u;
+            if (syncService.getState().isOnline && isApiConfigured()) {
+              const boot = await bootstrapOperatorOfflineData(u.userId);
+              if (boot) authUser = { ...authUser, ...boot };
+            }
+            const ctx = await buildOperatorContext(authUser.userId);
+            const updated = { ...authUser, ...ctx };
             await AsyncStorage.setItem("@spectra_user", JSON.stringify(updated));
+            await updateOfflineProfile(updated.userId, updated);
             setUser(updated);
           } else {
             setUser(u);
           }
         }
-      } catch {}
+      } catch {
+        /* ignore */
+      }
       setLoading(false);
     })();
   }, []);
 
-  const login = async (userId: string, password: string): Promise<boolean> => {
-    const match = VALID_USERS.find((u) => u.userId === userId && u.password === password);
-    if (!match) return false;
-
-    let authUser: AuthUser = {
-      id: match.id, userId: match.userId,
-      name: match.name, role: match.role,
-    };
-
-    if (match.role === "operator") {
-      const ctx = await buildOperatorContext(match.userId);
-      authUser = { ...authUser, ...ctx };
-    }
-
+  const persistUser = async (authUser: AuthUser) => {
     await AsyncStorage.setItem("@spectra_user", JSON.stringify(authUser));
     setUser(authUser);
-    return true;
+  };
+
+  const login = async (
+    userId: string,
+    password: string,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const apiResult = await loginWithApi(userId, password);
+
+    if ("user" in apiResult) {
+      let authUser: AuthUser = { ...apiResult.user };
+      await saveOfflineCredentials(userId, password, authUser);
+      if (authUser.role === "operator") {
+        authUser = await finalizeOperatorUser(authUser);
+      }
+      await persistUser(authUser);
+      return { ok: true };
+    }
+
+    const isNetworkError =
+      apiResult.error?.includes("Cannot reach server") ||
+      apiResult.error?.includes("did not respond in time");
+
+    if (isNetworkError) {
+      const offlineUser = await verifyOfflineCredentials(userId, password);
+      if (offlineUser) {
+        let authUser = offlineUser;
+        if (authUser.role === "operator") {
+          const ctx = await buildOperatorContext(authUser.userId);
+          authUser = { ...authUser, ...ctx };
+        }
+        await persistUser(authUser);
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        error:
+          "Offline login failed. Log in once while online to enable offline access for this account.",
+      };
+    }
+
+    return { ok: false, error: apiResult.error };
   };
 
   const refreshDeviceAuth = async () => {
     if (!user || user.role !== "operator") return;
+    if (syncService.getState().isOnline && isApiConfigured()) {
+      await bootstrapOperatorOfflineData(user.userId);
+    }
     const ctx = await buildOperatorContext(user.userId);
     const updated = { ...user, ...ctx };
     await AsyncStorage.setItem("@spectra_user", JSON.stringify(updated));
+    await updateOfflineProfile(updated.userId, updated);
     setUser(updated);
   };
 

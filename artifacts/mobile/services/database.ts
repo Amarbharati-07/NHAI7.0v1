@@ -203,7 +203,12 @@ async function web_getSyncQueue(): Promise<SyncRecord[]> {
 async function web_markSynced(recordId: number): Promise<void> {
   seedWebStore();
   const rec = webStore.syncQueue.find((r) => r.id === recordId);
-  if (rec) rec.status = "synced";
+  if (!rec) return;
+  rec.status = "synced";
+  if (rec.recordType === "attendance") {
+    const att = webStore.attendance.find((a) => a.id === rec.recordId);
+    if (att) att.syncStatus = "synced";
+  }
 }
 
 async function web_getAppSetting(key: string): Promise<string | null> {
@@ -255,12 +260,13 @@ async function web_updateWorker(id: number, fields: Parameters<typeof updateWork
   const idx = webStore.workers.findIndex((w) => w.id === id);
   if (idx === -1) throw new Error("Worker not found");
   const original = webStore.workers[idx];
+  const originalRecord = original as unknown as Record<string, unknown>;
   const updated = { ...original, ...fields };
   webStore.workers[idx] = updated;
   const fieldMap = ["fullName", "mobile", "department", "contractorName", "employeeType", "siteLocation"] as const;
   for (const key of fieldMap) {
-    if (fields[key] !== undefined && fields[key] !== (original as Record<string, unknown>)[key]) {
-      webStore.auditLog.push({ id: webStoreNextId.auditLog++, workerId: id, action: "update_field", fieldChanged: key, oldValue: String((original as Record<string, unknown>)[key] ?? ""), newValue: String(fields[key]), changedBy, createdAt: nowIso() });
+    if (fields[key] !== undefined && fields[key] !== originalRecord[key]) {
+      webStore.auditLog.push({ id: webStoreNextId.auditLog++, workerId: id, action: "update_field", fieldChanged: key, oldValue: String(originalRecord[key] ?? ""), newValue: String(fields[key]), changedBy, createdAt: nowIso() });
     }
   }
 }
@@ -291,14 +297,50 @@ async function web_getWorkerAttendanceStats(workerId: number): Promise<{ present
   return { present, absent, total, rate: total > 0 ? Math.round((present / total) * 100) : 0 };
 }
 
-async function web_getAttendanceStats(): Promise<{ total: number; present: number; absent: number; pending: number }> {
+function isActiveWorker(w: Worker): boolean {
+  return (w.status ?? "active") === "active";
+}
+
+async function web_purgeOrphanWorkerData(): Promise<number> {
   seedWebStore();
+  const validIds = new Set(webStore.workers.map((w) => w.id));
+  const before = webStore.attendance.length;
+  webStore.attendance = webStore.attendance.filter((a) => validIds.has(a.workerId));
+  webStore.faceImages = webStore.faceImages.filter((f) => validIds.has(f.workerId));
+  webStore.faceEmbeddings = webStore.faceEmbeddings.filter((f) => validIds.has(f.workerId));
+  webStore.auditLog = webStore.auditLog.filter((l) => l.workerId == null || validIds.has(l.workerId));
+  return before - webStore.attendance.length;
+}
+
+async function web_getAttendanceStats(): Promise<AttendanceStatsResult> {
+  seedWebStore();
+  await web_purgeOrphanWorkerData();
   const today = todayStr();
-  const todayRows = webStore.attendance.filter((a) => a.date === today);
-  const present = todayRows.filter((a) => a.status === "present").length;
-  const absent  = todayRows.filter((a) => a.status === "absent").length;
+  const activeWorkers = webStore.workers.filter(isActiveWorker);
+  const activeIds = new Set(activeWorkers.map((w) => w.id!));
+
+  if (activeIds.size === 0) {
+    return { activeWorkers: 0, present: 0, absent: 0, pending: 0, total: 0 };
+  }
+
+  const todayRows = webStore.attendance.filter((a) => a.date === today && activeIds.has(a.workerId));
+  const presentIds = new Set(
+    todayRows.filter((a) => a.status === "present").map((a) => a.workerId),
+  );
+  const absentIds = new Set(
+    todayRows
+      .filter((a) => a.status === "absent" && !presentIds.has(a.workerId))
+      .map((a) => a.workerId),
+  );
   const pending = todayRows.filter((a) => a.syncStatus === "pending").length;
-  return { total: present + absent, present, absent, pending };
+
+  return {
+    activeWorkers: activeIds.size,
+    present: presentIds.size,
+    absent: absentIds.size,
+    pending,
+    total: activeIds.size,
+  };
 }
 
 async function web_clearAllAppData(): Promise<{ workers: number; attendance: number; syncQueue: number }> {
@@ -335,6 +377,7 @@ async function web_getAttendanceForCSV(): Promise<AttendanceRecord[]> {
 
 async function web_getWeeklyAttendance(): Promise<{ day: string; count: number }[]> {
   seedWebStore();
+  const activeIds = new Set(webStore.workers.filter(isActiveWorker).map((w) => w.id!));
   const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const result: { day: string; count: number }[] = [];
   for (let i = 6; i >= 0; i--) {
@@ -342,8 +385,12 @@ async function web_getWeeklyAttendance(): Promise<{ day: string; count: number }
     d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().split("T")[0];
     const dayName = DAY_NAMES[d.getDay()];
-    const count = webStore.attendance.filter((a) => a.date === dateStr && a.status === "present").length;
-    result.push({ day: dayName, count });
+    const presentIds = new Set(
+      webStore.attendance
+        .filter((a) => a.date === dateStr && a.status === "present" && activeIds.has(a.workerId))
+        .map((a) => a.workerId),
+    );
+    result.push({ day: dayName, count: presentIds.size });
   }
   return result;
 }
@@ -353,13 +400,29 @@ async function web_getWeeklyAttendance(): Promise<{ day: string; count: number }
    ═══════════════════════════════════════════════════════════════ */
 
 let _db: import("expo-sqlite").SQLiteDatabase | null = null;
+let _dbInitPromise: Promise<import("expo-sqlite").SQLiteDatabase> | null = null;
 
-async function getDb(): Promise<import("expo-sqlite").SQLiteDatabase> {
+/** Open SQLite once (native). Safe to call from multiple parallel callers. */
+export async function initDatabase(): Promise<void> {
+  if (IS_WEB) return;
+  await getDb();
+}
+
+export async function getDb(): Promise<import("expo-sqlite").SQLiteDatabase> {
   if (_db) return _db;
-  const SQLite = await import("expo-sqlite");
-  _db = await SQLite.openDatabaseAsync("spectraId.db");
-  await initDb(_db);
-  return _db;
+  if (!_dbInitPromise) {
+    _dbInitPromise = (async () => {
+      const SQLite = await import("expo-sqlite");
+      const db = await SQLite.openDatabaseAsync("spectraId.db");
+      await initDb(db);
+      _db = db;
+      return db;
+    })().catch((err) => {
+      _dbInitPromise = null;
+      throw err;
+    });
+  }
+  return _dbInitPromise;
 }
 
 async function initDb(db: import("expo-sqlite").SQLiteDatabase) {
@@ -451,6 +514,7 @@ async function initDb(db: import("expo-sqlite").SQLiteDatabase) {
   }
 
   await seedSQLite(db);
+  await purgeOrphanWorkerData();
 }
 
 async function seedSQLite(db: import("expo-sqlite").SQLiteDatabase) {
@@ -622,7 +686,86 @@ export async function getSyncQueue(): Promise<SyncRecord[]> {
 export async function markSynced(recordId: number): Promise<void> {
   if (IS_WEB) return web_markSynced(recordId);
   const db = await getDb();
+  const row = await db.getFirstAsync<{ recordType: string; recordId: number }>(
+    "SELECT recordType, recordId FROM sync_queue WHERE id = ?",
+    [recordId],
+  );
   await db.runAsync("UPDATE sync_queue SET status = 'synced' WHERE id = ?", [recordId]);
+  if (row?.recordType === "attendance") {
+    await db.runAsync("UPDATE attendance SET syncStatus = 'synced' WHERE id = ?", [row.recordId]);
+  }
+}
+
+export async function upsertWorkersFromServer(
+  workers: Array<Omit<Worker, "id" | "createdAt">>,
+): Promise<number> {
+  if (IS_WEB) {
+    seedWebStore();
+    let count = 0;
+    for (const w of workers) {
+      const existing = webStore.workers.find((x) => x.workerId === w.workerId);
+      if (existing) {
+        Object.assign(existing, w, { status: (w.status as WorkerStatus) ?? "active" });
+      } else {
+        webStore.workers.push({
+          ...w,
+          id: webStoreNextId.workers++,
+          status: (w.status as WorkerStatus) ?? "active",
+          createdAt: nowIso(),
+        });
+      }
+      count++;
+    }
+    return count;
+  }
+
+  const db = await getDb();
+  let count = 0;
+  for (const w of workers) {
+    const existing = await db.getFirstAsync<{ id: number }>(
+      "SELECT id FROM workers WHERE workerId = ?",
+      [w.workerId],
+    );
+    if (existing) {
+      await db.runAsync(
+        `UPDATE workers SET fullName=?, mobile=?, department=?, contractorName=?, employeeType=?,
+         siteLocation=?, plazaId=?, operatorId=?, deviceToken=?, status=? WHERE id=?`,
+        [
+          w.fullName,
+          w.mobile ?? "",
+          w.department ?? "",
+          w.contractorName ?? "",
+          w.employeeType ?? "",
+          w.siteLocation ?? "",
+          w.plazaId ?? "",
+          w.operatorId ?? "",
+          w.deviceToken ?? "",
+          w.status ?? "active",
+          existing.id,
+        ],
+      );
+    } else {
+      await db.runAsync(
+        `INSERT INTO workers (workerId, fullName, mobile, department, contractorName, employeeType,
+         siteLocation, plazaId, operatorId, deviceToken, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [
+          w.workerId,
+          w.fullName,
+          w.mobile ?? "",
+          w.department ?? "",
+          w.contractorName ?? "",
+          w.employeeType ?? "",
+          w.siteLocation ?? "",
+          w.plazaId ?? "",
+          w.operatorId ?? "",
+          w.deviceToken ?? "",
+          w.status ?? "active",
+        ],
+      );
+    }
+    count++;
+  }
+  return count;
 }
 
 export async function getAppSetting(key: string): Promise<string | null> {
@@ -763,19 +906,130 @@ export async function getWorkerAttendanceStats(workerId: number): Promise<{ pres
   return { present, absent, total, rate: total > 0 ? Math.round((present / total) * 100) : 0 };
 }
 
-export async function getAttendanceStats(): Promise<{ total: number; present: number; absent: number; pending: number }> {
-  if (IS_WEB) return web_getAttendanceStats();
+export type AttendanceStatsResult = {
+  /** Active workers in SQLite (dashboard Total Workers). */
+  activeWorkers: number;
+  present: number;
+  absent: number;
+  pending: number;
+  /** Same as activeWorkers — kept for callers using `total`. */
+  total: number;
+};
+
+/** Remove attendance and related rows whose worker no longer exists. */
+export async function purgeOrphanWorkerData(): Promise<number> {
+  if (IS_WEB) return web_purgeOrphanWorkerData();
   const db = await getDb();
-  const today = new Date().toISOString().split("T")[0];
-  const rows = await db.getAllAsync<{ status: string; syncStatus: string; cnt: number }>(
-    "SELECT status, syncStatus, COUNT(*) as cnt FROM attendance WHERE date = ? GROUP BY status, syncStatus", [today]
+  const row = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) as c FROM attendance WHERE workerId NOT IN (SELECT id FROM workers)",
   );
-  let present = 0; let absent = 0; let pending = 0;
-  for (const r of rows) {
-    if (r.status === "present") present += r.cnt; else if (r.status === "absent") absent += r.cnt;
-    if (r.syncStatus === "pending") pending += r.cnt;
+  const orphanAttendance = row?.c ?? 0;
+  if (orphanAttendance > 0) {
+    await db.runAsync("DELETE FROM attendance WHERE workerId NOT IN (SELECT id FROM workers)");
   }
-  return { total: present + absent, present, absent, pending };
+  await db.runAsync("DELETE FROM face_embeddings WHERE workerId NOT IN (SELECT id FROM workers)");
+  await db.runAsync("DELETE FROM face_images WHERE workerId NOT IN (SELECT id FROM workers)");
+  await db.runAsync(
+    "DELETE FROM audit_log WHERE workerId IS NOT NULL AND workerId NOT IN (SELECT id FROM workers)",
+  );
+  await db.runAsync(
+    "DELETE FROM sync_queue WHERE recordType = 'worker' AND recordId NOT IN (SELECT id FROM workers)",
+  );
+  return orphanAttendance;
+}
+
+export async function getActiveWorkerCount(): Promise<number> {
+  if (IS_WEB) {
+    seedWebStore();
+    return webStore.workers.filter(isActiveWorker).length;
+  }
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) as c FROM workers WHERE status = 'active' OR status IS NULL",
+  );
+  return row?.c ?? 0;
+}
+
+export async function deleteWorker(workerId: number): Promise<void> {
+  if (IS_WEB) {
+    seedWebStore();
+    webStore.workers = webStore.workers.filter((w) => w.id !== workerId);
+    webStore.attendance = webStore.attendance.filter((a) => a.workerId !== workerId);
+    webStore.faceImages = webStore.faceImages.filter((f) => f.workerId !== workerId);
+    webStore.faceEmbeddings = webStore.faceEmbeddings.filter((f) => f.workerId !== workerId);
+    webStore.auditLog = webStore.auditLog.filter((l) => l.workerId !== workerId);
+    webStore.syncQueue = webStore.syncQueue.filter(
+      (r) => !(r.recordType === "worker" && r.recordId === workerId),
+    );
+    return;
+  }
+  const db = await getDb();
+  await db.runAsync("DELETE FROM attendance WHERE workerId = ?", [workerId]);
+  await db.runAsync("DELETE FROM face_embeddings WHERE workerId = ?", [workerId]);
+  await db.runAsync("DELETE FROM face_images WHERE workerId = ?", [workerId]);
+  await db.runAsync("DELETE FROM audit_log WHERE workerId = ?", [workerId]);
+  await db.runAsync(
+    "DELETE FROM sync_queue WHERE recordType = 'worker' AND recordId = ?",
+    [workerId],
+  );
+  await db.runAsync("DELETE FROM workers WHERE id = ?", [workerId]);
+}
+
+export async function getAttendanceStats(): Promise<AttendanceStatsResult> {
+  if (IS_WEB) return web_getAttendanceStats();
+
+  const db = await getDb();
+  await purgeOrphanWorkerData();
+
+  const activeRow = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) as c FROM workers WHERE status = 'active' OR status IS NULL",
+  );
+  const activeWorkers = activeRow?.c ?? 0;
+
+  if (activeWorkers === 0) {
+    return { activeWorkers: 0, present: 0, absent: 0, pending: 0, total: 0 };
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+
+  const presentRow = await db.getFirstAsync<{ c: number }>(
+    `SELECT COUNT(DISTINCT a.workerId) as c
+     FROM attendance a
+     INNER JOIN workers w ON w.id = a.workerId AND (w.status = 'active' OR w.status IS NULL)
+     WHERE a.date = ? AND a.status = 'present'`,
+    [today],
+  );
+  const present = presentRow?.c ?? 0;
+
+  const absentRow = await db.getFirstAsync<{ c: number }>(
+    `SELECT COUNT(DISTINCT a.workerId) as c
+     FROM attendance a
+     INNER JOIN workers w ON w.id = a.workerId AND (w.status = 'active' OR w.status IS NULL)
+     WHERE a.date = ? AND a.status = 'absent'
+       AND a.workerId NOT IN (
+         SELECT DISTINCT a2.workerId FROM attendance a2
+         INNER JOIN workers w2 ON w2.id = a2.workerId AND (w2.status = 'active' OR w2.status IS NULL)
+         WHERE a2.date = ? AND a2.status = 'present'
+       )`,
+    [today, today],
+  );
+  const absent = Math.min(absentRow?.c ?? 0, Math.max(0, activeWorkers - present));
+
+  const pendingRow = await db.getFirstAsync<{ c: number }>(
+    `SELECT COUNT(*) as c FROM attendance a
+     INNER JOIN workers w ON w.id = a.workerId AND (w.status = 'active' OR w.status IS NULL)
+     WHERE a.date = ? AND a.syncStatus = 'pending'`,
+    [today],
+  );
+  const pending = pendingRow?.c ?? 0;
+
+  return {
+    activeWorkers,
+    present,
+    absent,
+    pending,
+    total: activeWorkers,
+  };
 }
 
 export async function clearAllAppData(): Promise<{ workers: number; attendance: number; syncQueue: number }> {
@@ -784,7 +1038,9 @@ export async function clearAllAppData(): Promise<{ workers: number; attendance: 
   const wCount = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM workers");
   const aCount = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM attendance");
   const sCount = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM sync_queue");
-  await db.execAsync("DELETE FROM face_images; DELETE FROM audit_log; DELETE FROM attendance; DELETE FROM sync_queue; DELETE FROM workers;");
+  await db.execAsync(
+    "DELETE FROM face_embeddings; DELETE FROM face_images; DELETE FROM audit_log; DELETE FROM attendance; DELETE FROM sync_queue; DELETE FROM workers;",
+  );
   return { workers: wCount?.c ?? 0, attendance: aCount?.c ?? 0, syncQueue: sCount?.c ?? 0 };
 }
 
@@ -867,7 +1123,13 @@ export async function getWeeklyAttendance(): Promise<{ day: string; count: numbe
     d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().split("T")[0];
     const dayName = DAY_NAMES[d.getDay()];
-    const row = await db.getFirstAsync<{ cnt: number }>("SELECT COUNT(*) as cnt FROM attendance WHERE date = ? AND status = 'present'", [dateStr]);
+    const row = await db.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(DISTINCT a.workerId) as cnt
+       FROM attendance a
+       INNER JOIN workers w ON w.id = a.workerId AND (w.status = 'active' OR w.status IS NULL)
+       WHERE a.date = ? AND a.status = 'present'`,
+      [dateStr],
+    );
     result.push({ day: dayName, count: row?.cnt ?? 0 });
   }
   return result;

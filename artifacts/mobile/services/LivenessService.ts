@@ -116,7 +116,6 @@ export async function initModel(): Promise<void> {
     );
 
     isInitialised = true;
-    console.log("[LivenessService] MediaPipe FaceMesh loaded ✓ (478 landmarks + iris)");
   } catch (err) {
     console.error("[LivenessService] Model load failed:", err);
     throw err;

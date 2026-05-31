@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
-import React, { useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
   ScrollView,
@@ -17,7 +18,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAdminData } from "@/contexts/AdminDataContext";
-import type { AdminOperator } from "@/services/adminData";
+import type { AdminOperator, TollPlaza } from "@/services/adminData";
+import * as adminStore from "@/services/adminStore";
+import { filterPlazasBySearch, plazaStatusLabel, sortPlazasByName } from "@/services/plazaUtils";
 import { useColors } from "@/hooks/useColors";
 
 type OpFilter = "all" | "active" | "suspended" | "pending";
@@ -37,9 +40,18 @@ function OperatorCard({ op, onAction }: { op: AdminOperator; onAction: (action: 
           <Text style={[st.opName, { color: colors.foreground }]}>{op.name}</Text>
           <Text style={[st.opId, { color: colors.textMuted }]}>{op.userId} · {op.mobile}</Text>
         </View>
-        <View style={[st.statusPill, { backgroundColor: statusColor + "22" }]}>
-          <View style={[st.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={[st.statusText, { color: statusColor }]}>{statusLabel}</Text>
+        <View style={st.cardHeaderActions}>
+          <View style={[st.statusPill, { backgroundColor: statusColor + "22" }]}>
+            <View style={[st.statusDot, { backgroundColor: statusColor }]} />
+            <Text style={[st.statusText, { color: statusColor }]}>{statusLabel}</Text>
+          </View>
+          <TouchableOpacity
+            style={[st.deleteIconBtn, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "33" }]}
+            onPress={() => onAction("delete", op)}
+            accessibilityLabel="Delete operator"
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -82,6 +94,10 @@ function OperatorCard({ op, onAction }: { op: AdminOperator; onAction: (action: 
           <Ionicons name="phone-portrait-outline" size={13} color={colors.primary} />
           <Text style={[st.actionBtnText, { color: colors.primary }]}>Device</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[st.actionBtn, { backgroundColor: colors.destructive + "18" }]} onPress={() => onAction("delete", op)}>
+          <Ionicons name="trash-outline" size={13} color={colors.destructive} />
+          <Text style={[st.actionBtnText, { color: colors.destructive }]}>Delete</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -105,7 +121,19 @@ export default function AdminOperatorsScreen() {
   const insets = useSafeAreaInsets();
   const botPad = Platform.OS === "web" ? 24 : insets.bottom + 20;
 
-  const { operators, plazas, allocations, devices, addOperator, updateOperatorData } = useAdminData();
+  const {
+    operators,
+    plazas,
+    allocations,
+    devices,
+    addOperator,
+    updateOperatorData,
+    deleteOperator,
+    refresh,
+    loading,
+    apiOnline,
+    apiError,
+  } = useAdminData();
 
   const [filter, setFilter]           = useState<OpFilter>("all");
   const [saving, setSaving]           = useState(false);
@@ -120,6 +148,43 @@ export default function AdminOperatorsScreen() {
   const [pwdCopied, setPwdCopied]         = useState(false);
   const [deviceTarget, setDeviceTarget]   = useState<AdminOperator | null>(null);
   const [successMsg, setSuccessMsg]       = useState("");
+  const [modalPlazas, setModalPlazas]     = useState<TollPlaza[]>([]);
+  const [plazasLoading, setPlazasLoading] = useState(false);
+  const [plazaSearch, setPlazaSearch]     = useState("");
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
+
+  const loadPlazasForModal = useCallback(async () => {
+    setPlazasLoading(true);
+    try {
+      const list = await adminStore.getTollPlazas();
+      setModalPlazas(list);
+    } catch (err) {
+      console.error("[admin-operators] load plazas error:", err);
+      setModalPlazas(plazas);
+    } finally {
+      setPlazasLoading(false);
+    }
+  }, [plazas]);
+
+  const assignablePlazas = useMemo(() => {
+    const source = modalPlazas.length > 0 ? modalPlazas : plazas;
+    return filterPlazasBySearch(sortPlazasByName(source), plazaSearch);
+  }, [modalPlazas, plazas, plazaSearch]);
+
+  const openCreateModal = () => {
+    setFormState(emptyForm);
+    setFormErrors({});
+    setPlazaSearch("");
+    setShowCreate(true);
+    void loadPlazasForModal();
+    void refresh();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
@@ -144,12 +209,12 @@ export default function AdminOperatorsScreen() {
       try {
         await updateOperatorData(op.id, { status: "active" });
         showSuccess(`${op.name} account activated successfully.`);
-        console.log("[admin-operators] activate success:", op.id);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (e) {
         console.error("[admin-operators] activate error:", e);
+      } finally {
+        setSaving(false);
       }
-      setSaving(false);
     } else if (action === "resetPwd") {
       const pwd = generateTempPassword();
       setGeneratedPwd(pwd);
@@ -157,6 +222,34 @@ export default function AdminOperatorsScreen() {
       setResetTarget(op);
     } else if (action === "viewDevice") {
       setDeviceTarget(op);
+    } else if (action === "delete") {
+      Alert.alert(
+        "Delete Operator",
+        `Permanently delete ${op.name} (${op.userId})? They will no longer be able to log in.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              setSaving(true);
+              try {
+                await deleteOperator(op.userId);
+                showSuccess(`${op.name} has been deleted.`);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              } catch (e) {
+                console.error("[admin-operators] delete error:", e);
+                Alert.alert(
+                  "Delete failed",
+                  e instanceof Error ? e.message : "Could not delete operator.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            },
+          },
+        ],
+      );
     }
   };
 
@@ -166,13 +259,35 @@ export default function AdminOperatorsScreen() {
     try {
       await updateOperatorData(suspendTarget.id, { status: "suspended" });
       showSuccess(`${suspendTarget.name} has been suspended.`);
-      console.log("[admin-operators] suspend success:", suspendTarget.id);
       setSuspendTarget(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     } catch (e) {
       console.error("[admin-operators] suspend error:", e);
+      Alert.alert("Suspend failed", e instanceof Error ? e.message : "Could not update operator.");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
+  };
+
+  const confirmResetPassword = async () => {
+    if (!resetTarget || !generatedPwd) return;
+    setSaving(true);
+    try {
+      await updateOperatorData(resetTarget.userId, { password: generatedPwd });
+      const name = resetTarget.name;
+      setResetTarget(null);
+      setGeneratedPwd("");
+      showSuccess(`Password reset for ${name}. Operator can log in with the new password.`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error("[admin-operators] reset password error:", e);
+      Alert.alert(
+        "Password reset failed",
+        e instanceof Error ? e.message : "Could not save the new password. Check API connection.",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const validateCreate = () => {
@@ -188,19 +303,20 @@ export default function AdminOperatorsScreen() {
 
   const handleCreate = async () => {
     if (!validateCreate()) return;
-    const plaza = plazas.find((p) => p.id === form.plazaId);
+    const plazaList = modalPlazas.length > 0 ? modalPlazas : plazas;
+    const plaza = plazaList.find((p) => p.id === form.plazaId);
     setSaving(true);
     try {
-      const op = await addOperator({
-        userId:    form.userId,
+      await addOperator({
+        userId:    form.userId.trim().toUpperCase(),
+        password:  form.password,
         name:      form.name.trim(),
         mobile:    form.mobile.trim(),
         email:     form.email.trim(),
         plazaId:   form.plazaId,
         plazaName: plaza?.name ?? "Unassigned",
-        status:    "pending",
+        status:    "active",
       });
-      console.log("[admin-operators] create success:", op.id, op.name);
       setShowCreate(false);
       setFormState(emptyForm);
       setFormErrors({});
@@ -208,8 +324,13 @@ export default function AdminOperatorsScreen() {
       showSuccess(`Operator ${form.name} created. Assign a device next.`);
     } catch (e) {
       console.error("[admin-operators] create error:", e);
+      Alert.alert(
+        "Create failed",
+        e instanceof Error ? e.message : "Could not create operator.",
+      );
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const setField = (k: keyof CreateForm, v: string) => {
@@ -237,6 +358,31 @@ export default function AdminOperatorsScreen() {
           </View>
         )}
 
+        {!apiOnline && apiError ? (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginTop: 8,
+              padding: 12,
+              borderRadius: 10,
+              backgroundColor: colors.destructive + "14",
+              borderWidth: 1,
+              borderColor: colors.destructive + "44",
+            }}
+          >
+            <Text style={{ color: colors.destructive, fontSize: 13, fontWeight: "600" }}>
+              API offline — changes will not be saved
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>{apiError}</Text>
+          </View>
+        ) : null}
+
+        {loading && operators.length === 0 && (
+          <View style={{ padding: 12, alignItems: "center" }}>
+            <ActivityIndicator size="small" color={colors.primary} />
+          </View>
+        )}
+
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[st.scroll, { paddingBottom: botPad }]}>
 
           {/* KPI Row */}
@@ -252,7 +398,7 @@ export default function AdminOperatorsScreen() {
           {/* Create Button */}
           <TouchableOpacity
             style={[st.createBtn, { backgroundColor: colors.accent, borderRadius: colors.radius }]}
-            onPress={() => { setShowCreate(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); }}
+            onPress={openCreateModal}
           >
             <Ionicons name="person-add-outline" size={18} color="#fff" />
             <Text style={st.createBtnText}>Create New Operator</Text>
@@ -276,8 +422,15 @@ export default function AdminOperatorsScreen() {
 
           {/* Operator Cards */}
           {filtered.map((op) => (
-            <OperatorCard key={op.id} op={op} onAction={handleAction} />
+            <OperatorCard key={op.userId || op.id} op={op} onAction={handleAction} />
           ))}
+
+          {filtered.length === 0 && !loading && (
+            <View style={[st.emptyState, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
+              <Ionicons name="people-outline" size={40} color={colors.textMuted} />
+              <Text style={[st.emptyText, { color: colors.textMuted }]}>No Operators Found</Text>
+            </View>
+          )}
         </ScrollView>
       </View>
 
@@ -329,7 +482,7 @@ export default function AdminOperatorsScreen() {
               <Text style={[st.resetSubtitle, { color: colors.textSecondary }]}>
                 A temporary password has been generated for{" "}
                 <Text style={{ fontWeight: "700", color: colors.foreground }}>{resetTarget?.name}</Text>.
-                Share it securely — they must change it on next login.
+                Share it securely — the operator can log in with this password immediately.
               </Text>
               <View style={[st.pwdBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Text style={[st.pwdText, { color: colors.foreground }]} selectable>{generatedPwd}</Text>
@@ -355,11 +508,16 @@ export default function AdminOperatorsScreen() {
                 <Text style={[st.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[st.confirmBtn, { backgroundColor: colors.accent }]}
-                onPress={() => { setResetTarget(null); showSuccess(`Password reset for ${resetTarget?.name}.`); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }}
+                style={[st.confirmBtn, { backgroundColor: colors.accent, opacity: saving ? 0.6 : 1 }]}
+                onPress={() => void confirmResetPassword()}
+                disabled={saving}
               >
-                <Ionicons name="checkmark-outline" size={16} color="#fff" />
-                <Text style={st.confirmText}>Confirm Reset</Text>
+                {saving ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="checkmark-outline" size={16} color="#fff" />
+                )}
+                <Text style={st.confirmText}>{saving ? "Saving…" : "Confirm Reset"}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -503,21 +661,51 @@ export default function AdminOperatorsScreen() {
 
               <View style={st.fieldGroup}>
                 <Text style={[st.fieldLabel, { color: colors.textSecondary }]}>Assign Toll Plaza *</Text>
+                <Text style={[st.plazaHint, { color: colors.textMuted }]}>
+                  {assignablePlazas.length} of {modalPlazas.length || plazas.length} plaza{(modalPlazas.length || plazas.length) !== 1 ? "s" : ""} — same list as Toll Plaza Management
+                </Text>
                 {formErrors.plazaId && <Text style={[st.errText, { color: colors.destructive }]}>{formErrors.plazaId}</Text>}
-                {plazas.filter((p) => p.status !== "inactive").map((plaza) => (
-                  <TouchableOpacity
-                    key={plaza.id}
-                    style={[st.plazaRow, { backgroundColor: form.plazaId === plaza.id ? colors.primary + "18" : colors.surface, borderColor: form.plazaId === plaza.id ? colors.primary : colors.border, borderRadius: colors.radius }]}
-                    onPress={() => setField("plazaId", plaza.id)}
-                  >
-                    <Ionicons name="business-outline" size={16} color={form.plazaId === plaza.id ? colors.primary : colors.textMuted} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[st.plazaName, { color: colors.foreground }]}>{plaza.name}</Text>
-                      <Text style={[st.plazaRoute, { color: colors.textMuted }]}>{plaza.route} · {plaza.location}</Text>
-                    </View>
-                    {form.plazaId === plaza.id && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
-                  </TouchableOpacity>
-                ))}
+                <View style={[st.inputWrap, { backgroundColor: colors.surface, borderColor: colors.border, height: 42 }]}>
+                  <Ionicons name="search-outline" size={16} color={colors.textMuted} />
+                  <TextInput
+                    style={[st.textInput, { color: colors.foreground }]}
+                    placeholder="Search by name, route, location, ID…"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={plazaSearch}
+                    onChangeText={setPlazaSearch}
+                  />
+                </View>
+                {plazasLoading ? (
+                  <View style={st.plazaLoading}>
+                    <ActivityIndicator color={colors.primary} />
+                    <Text style={[st.plazaHint, { color: colors.textMuted }]}>Loading toll plazas…</Text>
+                  </View>
+                ) : assignablePlazas.length === 0 ? (
+                  <Text style={[st.plazaHint, { color: colors.textMuted }]}>
+                    No toll plazas found. Register one in Toll Plaza Management, then try again.
+                  </Text>
+                ) : (
+                  assignablePlazas.map((plaza) => (
+                    <TouchableOpacity
+                      key={plaza.id}
+                      style={[st.plazaRow, { backgroundColor: form.plazaId === plaza.id ? colors.primary + "18" : colors.surface, borderColor: form.plazaId === plaza.id ? colors.primary : colors.border, borderRadius: colors.radius }]}
+                      onPress={() => setField("plazaId", plaza.id)}
+                    >
+                      <Ionicons name="business-outline" size={16} color={form.plazaId === plaza.id ? colors.primary : colors.textMuted} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[st.plazaName, { color: colors.foreground }]}>{plaza.name}</Text>
+                        <Text style={[st.plazaRoute, { color: colors.textMuted }]}>{plaza.route} · {plaza.location}</Text>
+                        <Text style={[st.plazaIdText, { color: colors.textMuted }]}>ID: {plaza.id}</Text>
+                      </View>
+                      {plaza.status !== "active" && (
+                        <View style={[st.plazaStatusPill, { backgroundColor: colors.warning + "22" }]}>
+                          <Text style={[st.plazaStatusText, { color: colors.warning }]}>{plazaStatusLabel(plaza.status)}</Text>
+                        </View>
+                      )}
+                      {form.plazaId === plaza.id && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
+                    </TouchableOpacity>
+                  ))
+                )}
               </View>
             </ScrollView>
 
@@ -569,8 +757,10 @@ const st = StyleSheet.create({
   infoGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, gap: 8 },
   infoItem: { width: "46%", flexDirection: "row", alignItems: "center", gap: 6 },
   infoText: { fontSize: 12, flex: 1 },
-  actionsRow: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
-  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
+  cardHeaderActions: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  deleteIconBtn: { width: 36, height: 36, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
+  actionBtn: { width: "48%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
   actionBtnText: { fontSize: 12, fontWeight: "600" },
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   confirmSheet: { margin: 20, borderRadius: 16, borderWidth: 1, padding: 24, alignItems: "center", gap: 12, marginBottom: 40 },
@@ -614,10 +804,17 @@ const st = StyleSheet.create({
   textInput: { flex: 1, fontSize: 14 },
   errText: { fontSize: 11 },
   plazaRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderWidth: 1, marginBottom: 8 },
+  plazaHint: { fontSize: 11, marginBottom: 4 },
+  plazaLoading: { alignItems: "center", gap: 8, paddingVertical: 16 },
   plazaName: { fontSize: 14, fontWeight: "600" },
   plazaRoute: { fontSize: 12 },
+  plazaIdText: { fontSize: 10, marginTop: 2 },
+  plazaStatusPill: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginRight: 4 },
+  plazaStatusText: { fontSize: 10, fontWeight: "600" },
   cancelBtn: { flex: 1, height: 46, borderWidth: 1, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   cancelText: { fontSize: 14, fontWeight: "600" },
   confirmBtn: { flex: 1, height: 46, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   confirmText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  emptyState: { alignItems: "center", justifyContent: "center", padding: 32, borderWidth: 1, gap: 10, marginTop: 8 },
+  emptyText: { fontSize: 14, fontWeight: "600" },
 });

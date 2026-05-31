@@ -214,6 +214,13 @@ export async function updateDeviceStatus(deviceId: string, status: DeviceStatus)
   await saveRegisteredDevices(devices.map((d) => d.id === deviceId ? { ...d, status } : d));
 }
 
+/** Permanently remove a device and its operator allocations from local storage. */
+export async function deleteRegisteredDevice(deviceId: string): Promise<void> {
+  const [devices, allocations] = await Promise.all([getRegisteredDevices(), getAllocations()]);
+  await saveRegisteredDevices(devices.filter((d) => d.id !== deviceId));
+  await saveAllocations(allocations.filter((a) => a.deviceId !== deviceId));
+}
+
 export async function updateDeviceActivity(deviceId: string, type: "active" | "login"): Promise<void> {
   const devices = await getRegisteredDevices();
   const now = new Date().toLocaleString("en-IN");
@@ -330,6 +337,64 @@ export async function updateAllocationStatus(
       )
     );
   }
+}
+
+/* ─── Bootstrap: sync operator device allocation from API login ─── */
+
+export async function ensureOperatorAllocationFromBootstrap(
+  operator: { userId: string; name: string; plazaId: string; plazaName: string },
+  serverDevice: {
+    deviceId: string;
+    deviceName: string;
+    deviceModel: string;
+    deviceType: string;
+    plazaName: string;
+  } | null,
+  localDeviceToken: string,
+): Promise<void> {
+  const existing = await getOperatorAllocation(operator.userId);
+  if (
+    existing &&
+    existing.deviceToken === localDeviceToken &&
+    existing.status === "active"
+  ) {
+    return;
+  }
+
+  let devices = await getRegisteredDevices();
+  let localDev = devices.find((d) => d.deviceToken === localDeviceToken);
+
+  if (!localDev) {
+    const platform = getDevicePlatform();
+    localDev = await registerDevice({
+      deviceName: serverDevice?.deviceName ?? "Operator Field Device",
+      deviceModel: serverDevice?.deviceModel ?? "Mobile Device",
+      imeiNumber: "N/A",
+      platform,
+      osVersion: getDefaultOsVersion(platform),
+      deviceToken: localDeviceToken,
+      registeredBy: "BOOTSTRAP",
+      assignedPlazaId: operator.plazaId,
+      assignedPlazaName: operator.plazaName,
+    });
+    devices = await getRegisteredDevices();
+  }
+
+  await createAllocation({
+    operatorId: operator.userId,
+    operatorName: operator.name,
+    plazaId: operator.plazaId,
+    plazaName: operator.plazaName,
+    deviceId: localDev.id,
+    deviceName: localDev.deviceName,
+    deviceModel: localDev.deviceModel,
+    platform: localDev.platform,
+    deviceToken: localDeviceToken,
+    appToken: localDev.appToken,
+    status: "active",
+    allocatedAt: nowDate(),
+    allocatedBy: "BOOTSTRAP",
+  });
 }
 
 /* ─── Device Verification (by Device ID + Token) ─── */

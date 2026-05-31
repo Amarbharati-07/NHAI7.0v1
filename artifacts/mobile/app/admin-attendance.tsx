@@ -21,6 +21,7 @@ import { getWeeklyAttendance } from "@/services/database";
 import { syncService } from "@/services/SyncService";
 import { exportAttendanceCSV, exportWeeklyCSV, exportWorkersCSV } from "@/services/reportService";
 import { useColors } from "@/hooks/useColors";
+import { getApiBase } from "@/services/apiConfig";
 
 type ViewTab = "live" | "trends" | "records" | "alerts" | "reports";
 
@@ -56,12 +57,6 @@ const REPORT_TYPES = [
   { label: "Plaza-wise",      icon: "business-outline"  as const, color: "#EF4444", desc: "Individual plaza attendance" },
   { label: "Worker Report",   icon: "person-outline"    as const, color: "#64748B", desc: "Per-worker attendance history" },
 ];
-
-function getApiBase(): string {
-  const domain = process.env["EXPO_PUBLIC_DOMAIN"];
-  if (domain) return `https://${domain}:3000/api`;
-  return "http://localhost:3000/api";
-}
 
 export default function AdminAttendanceScreen() {
   const colors = useColors();

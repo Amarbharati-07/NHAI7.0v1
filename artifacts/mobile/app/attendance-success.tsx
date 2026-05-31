@@ -14,6 +14,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminData } from "@/contexts/AdminDataContext";
 import { insertAttendance, getWorkerByWorkerId } from "@/services/database";
 import { syncService } from "@/services/SyncService";
 import { requestLocationPermission, getCurrentLocation, checkGeofence, GpsLocation } from "@/services/locationService";
@@ -23,6 +24,7 @@ export default function AttendanceSuccessScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { refresh: refreshAdminData } = useAdminData();
 
   const { workerName, workerId, department, confidence } =
     useLocalSearchParams<{
@@ -86,6 +88,8 @@ export default function AttendanceSuccessScreen() {
           latitude: loc?.latitude ?? null,
           longitude: loc?.longitude ?? null,
         });
+
+        await refreshAdminData();
 
         const netState = syncService.getState();
         if (netState.isOnline) {

@@ -423,7 +423,7 @@ export default function LivenessCameraScreen() {
             </TouchableOpacity>
           )}
 
-          {phase === "detecting" && (
+          {phase === "detecting" && (Platform.OS === "web" || !modelReady) && (
             <TouchableOpacity
               style={[styles.ctaBtn, { backgroundColor: step.color }]}
               onPress={handleConfirm}
@@ -432,6 +432,13 @@ export default function LivenessCameraScreen() {
               <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
               <Text style={styles.ctaBtnText}>Confirm: Action Completed</Text>
             </TouchableOpacity>
+          )}
+
+          {phase === "detecting" && Platform.OS !== "web" && modelReady && (
+            <View style={[styles.ctaBtn, { backgroundColor: step.color + "88" }]}>
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={styles.ctaBtnText}>Detecting liveness…</Text>
+            </View>
           )}
 
           {phase === "confirmed" && (

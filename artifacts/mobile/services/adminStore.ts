@@ -1,257 +1,380 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { TollPlaza, AdminOperator, SecurityEvent, AuditLog } from "./adminData";
-import { getApiBase } from "./SyncService";
+import {
+  apiDeletePath,
+  apiGetJson,
+  apiPostJson,
+  apiPutJson,
+  isApiConfigured,
+} from "./apiConfig";
 
-const PLAZAS_KEY    = "@spectra_plazas_v4";
+const PLAZAS_KEY = "@spectra_plazas_v4";
 const OPERATORS_KEY = "@spectra_operators_v4";
-const SEEDED_KEY    = "@spectra_admin_seeded_v4";
-
-/* ─── API helpers ─── */
-
-async function apiGet<T>(path: string): Promise<T | null> {
-  try {
-    const base = getApiBase();
-    const res = await fetch(`${base}/${path}`, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function apiPost<T>(path: string, body: object): Promise<T | null> {
-  try {
-    const base = getApiBase();
-    const res = await fetch(`${base}/${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function apiPut(path: string, body: object): Promise<boolean> {
-  try {
-    const base = getApiBase();
-    const res = await fetch(`${base}/${path}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function apiDelete(path: string): Promise<boolean> {
-  try {
-    const base = getApiBase();
-    const res = await fetch(`${base}/${path}`, {
-      method: "DELETE",
-      signal: AbortSignal.timeout(8000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
+const SEEDED_KEY = "@spectra_admin_seeded_v4";
 
 /* ─── Row normalisation — API shape → app interface ─── */
 
 function normalisePlaza(p: any): TollPlaza {
   return {
-    id:              p.plazaId ?? p.id ?? "",
-    name:            p.name ?? "",
-    route:           p.route ?? "",
-    location:        p.location ?? "",
-    operatorId:      p.operatorId ?? "",
-    operatorName:    p.operatorName ?? "Unassigned",
-    workerCount:     p.workerCount ?? 0,
-    activeDevices:   p.activeDevices ?? 0,
+    id: p.plazaId ?? p.id ?? "",
+    name: p.name ?? "",
+    route: p.route ?? "",
+    location: p.location ?? "",
+    operatorId: p.operatorId ?? "",
+    operatorName: p.operatorName ?? "Unassigned",
+    workerCount: p.workerCount ?? 0,
+    activeDevices: p.activeDevices ?? 0,
     attendanceToday: p.attendanceToday ?? 0,
-    attendancePct:   p.attendancePct ?? 0,
-    status:          (p.status as TollPlaza["status"]) ?? "inactive",
-    lastSync:        p.lastSync ?? "Never",
-    createdAt:       p.createdAt ? new Date(p.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+    attendancePct: p.attendancePct ?? 0,
+    status: (p.status as TollPlaza["status"]) ?? "inactive",
+    lastSync: p.lastSync ?? "Never",
+    createdAt: p.createdAt
+      ? new Date(p.createdAt).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0],
   };
 }
 
 function normaliseOperator(o: any): AdminOperator {
   return {
-    id:          o.userId ?? o.id ?? "",
-    userId:      o.userId ?? o.id ?? "",
-    name:        o.name ?? "",
-    mobile:      o.mobile ?? "",
-    email:       o.email ?? "",
-    plazaId:     o.plazaId ?? "",
-    plazaName:   o.plazaName ?? "Unassigned",
-    status:      (o.status as AdminOperator["status"]) ?? "pending",
-    lastLogin:   o.lastLogin ?? "Never",
-    loginCount:  o.loginCount ?? 0,
+    id: o.userId ?? o.id ?? "",
+    userId: o.userId ?? o.id ?? "",
+    name: o.name ?? "",
+    mobile: o.mobile ?? "",
+    email: o.email ?? "",
+    plazaId: o.plazaId ?? "",
+    plazaName: o.plazaName ?? "Unassigned",
+    status: (o.status as AdminOperator["status"]) ?? "pending",
+    lastLogin: o.lastLogin ?? "Never",
+    loginCount: o.loginCount ?? 0,
     deviceCount: o.deviceCount ?? 0,
-    createdAt:   o.createdAt ? new Date(o.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+    createdAt: o.createdAt
+      ? new Date(o.createdAt).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0],
   };
 }
 
-/* ─── Seed (used only when no API + no cache) ─── */
+/* ─── Demo seed (only when EXPO_PUBLIC_API_URL is not set) ─── */
 
 const SEED_PLAZAS: TollPlaza[] = [
-  { id: "PLZ001", name: "NH-48 Gurugram Plaza", route: "NH-48", location: "Gurugram, Haryana",  operatorId: "OPR001", operatorName: "Rajan Mehta",  workerCount: 32, activeDevices: 2, attendanceToday: 30, attendancePct: 94, status: "active",      lastSync: "10 mins ago", createdAt: "2024-01-15" },
-  { id: "PLZ002", name: "NH-8 Manesar Plaza",   route: "NH-8",  location: "Manesar, Haryana",   operatorId: "OPR002", operatorName: "Kavita Joshi", workerCount: 28, activeDevices: 2, attendanceToday: 24, attendancePct: 86, status: "active",      lastSync: "25 mins ago", createdAt: "2024-02-01" },
-  { id: "PLZ003", name: "NH-44 Panipat Plaza",  route: "NH-44", location: "Panipat, Haryana",   operatorId: "OPR003", operatorName: "Arun Patel",   workerCount: 25, activeDevices: 1, attendanceToday: 23, attendancePct: 92, status: "active",      lastSync: "1 hr ago",    createdAt: "2024-02-20" },
-  { id: "PLZ004", name: "NH-58 Meerut Plaza",   route: "NH-58", location: "Meerut, UP",         operatorId: "",       operatorName: "Unassigned",   workerCount: 0,  activeDevices: 0, attendanceToday: 0,  attendancePct: 0,  status: "inactive",   lastSync: "Never",       createdAt: "2024-03-10" },
-  { id: "PLZ005", name: "NH-24 Delhi Toll",     route: "NH-24", location: "Delhi",              operatorId: "OPR004", operatorName: "Shreya Singh", workerCount: 18, activeDevices: 1, attendanceToday: 15, attendancePct: 83, status: "maintenance", lastSync: "3 hrs ago",   createdAt: "2024-03-25" },
+  {
+    id: "PLZ001",
+    name: "NH-48 Gurugram Plaza",
+    route: "NH-48",
+    location: "Gurugram, Haryana",
+    operatorId: "OPR001",
+    operatorName: "Rajan Mehta",
+    workerCount: 32,
+    activeDevices: 2,
+    attendanceToday: 30,
+    attendancePct: 94,
+    status: "active",
+    lastSync: "10 mins ago",
+    createdAt: "2024-01-15",
+  },
+  {
+    id: "PLZ002",
+    name: "NH-8 Manesar Plaza",
+    route: "NH-8",
+    location: "Manesar, Haryana",
+    operatorId: "OPR002",
+    operatorName: "Kavita Joshi",
+    workerCount: 28,
+    activeDevices: 2,
+    attendanceToday: 24,
+    attendancePct: 86,
+    status: "active",
+    lastSync: "25 mins ago",
+    createdAt: "2024-02-01",
+  },
 ];
 
 const SEED_OPERATORS: AdminOperator[] = [
-  { id: "OPR001", userId: "OPR001", name: "Rajan Mehta",  mobile: "9811234567", email: "rajan@nhai.in",   plazaId: "PLZ001", plazaName: "NH-48 Gurugram Plaza", status: "active",    lastLogin: "Today, 08:15 AM", loginCount: 142, deviceCount: 1, createdAt: "2024-01-15" },
-  { id: "OPR002", userId: "OPR002", name: "Kavita Joshi", mobile: "9822345678", email: "kavita@nhai.in",  plazaId: "PLZ002", plazaName: "NH-8 Manesar Plaza",   status: "active",    lastLogin: "Today, 09:02 AM", loginCount: 98,  deviceCount: 1, createdAt: "2024-02-01" },
-  { id: "OPR003", userId: "OPR003", name: "Arun Patel",   mobile: "9833456789", email: "arun@nhai.in",    plazaId: "PLZ003", plazaName: "NH-44 Panipat Plaza",  status: "active",    lastLogin: "Today, 07:48 AM", loginCount: 87,  deviceCount: 1, createdAt: "2024-02-20" },
-  { id: "OPR004", userId: "OPR004", name: "Shreya Singh", mobile: "9844567890", email: "shreya@nhai.in",  plazaId: "PLZ005", plazaName: "NH-24 Delhi Toll",     status: "suspended", lastLogin: "3 days ago",      loginCount: 54,  deviceCount: 1, createdAt: "2024-03-10" },
-  { id: "OPR005", userId: "OPR005", name: "Vikram Rao",   mobile: "9855678901", email: "vikram@nhai.in",  plazaId: "",       plazaName: "Unassigned",           status: "pending",   lastLogin: "Never",           loginCount: 0,   deviceCount: 0, createdAt: "2024-05-15" },
+  {
+    id: "OPR001",
+    userId: "OPR001",
+    name: "Rajan Mehta",
+    mobile: "9811234567",
+    email: "rajan@nhai.in",
+    plazaId: "PLZ001",
+    plazaName: "NH-48 Gurugram Plaza",
+    status: "active",
+    lastLogin: "Today, 08:15 AM",
+    loginCount: 142,
+    deviceCount: 1,
+    createdAt: "2024-01-15",
+  },
 ];
 
-async function ensureSeeded(): Promise<void> {
+async function ensureDemoSeeded(): Promise<void> {
   const seeded = await AsyncStorage.getItem(SEEDED_KEY);
   if (seeded) return;
   await AsyncStorage.multiSet([
-    [PLAZAS_KEY,    JSON.stringify(SEED_PLAZAS)],
+    [PLAZAS_KEY, JSON.stringify(SEED_PLAZAS)],
     [OPERATORS_KEY, JSON.stringify(SEED_OPERATORS)],
-    [SEEDED_KEY,    "1"],
+    [SEEDED_KEY, "1"],
   ]);
 }
 
-function nowDate(): string { return new Date().toISOString().split("T")[0]; }
+async function readCache<T>(key: string): Promise<T | null> {
+  const raw = await AsyncStorage.getItem(key);
+  return raw ? (JSON.parse(raw) as T) : null;
+}
+
+function nowDate(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+/** One-time removal of offline demo seed when switching to API mode. */
+async function clearLegacyDemoCache(): Promise<void> {
+  const seeded = await AsyncStorage.getItem(SEEDED_KEY);
+  if (!seeded) return;
+  await AsyncStorage.multiRemove([SEEDED_KEY, PLAZAS_KEY, OPERATORS_KEY]);
+}
+
+/** Load from API and refresh offline cache (API mode only). */
+async function syncPlazasFromApi(): Promise<TollPlaza[]> {
+  const plazas = (await apiGetJson<any[]>("admin/plazas")).map(normalisePlaza);
+  await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify(plazas));
+  return plazas;
+}
+
+async function syncOperatorsFromApi(): Promise<AdminOperator[]> {
+  const ops = (await apiGetJson<any[]>("admin/operators")).map(normaliseOperator);
+  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(ops));
+  return ops;
+}
 
 /* ─── Toll Plaza CRUD ─── */
 
 export async function getTollPlazas(): Promise<TollPlaza[]> {
-  const apiData = await apiGet<any[]>("admin/plazas");
-  if (apiData) {
-    const plazas = apiData.map(normalisePlaza);
-    await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify(plazas));
-    console.log(`[adminStore] getTollPlazas (API) → ${plazas.length}`);
-    return plazas;
+  if (isApiConfigured()) {
+    await clearLegacyDemoCache();
+    return await syncPlazasFromApi();
   }
-  await ensureSeeded();
-  const raw = await AsyncStorage.getItem(PLAZAS_KEY);
-  const plazas: TollPlaza[] = raw ? JSON.parse(raw) : [];
-  console.log(`[adminStore] getTollPlazas (cache) → ${plazas.length}`);
-  return plazas;
+  await ensureDemoSeeded();
+  return (await readCache<TollPlaza[]>(PLAZAS_KEY)) ?? [];
 }
 
-export async function addTollPlaza(data: Pick<TollPlaza, "name" | "route" | "location">): Promise<TollPlaza> {
-  const apiRow = await apiPost<any>("admin/plazas", { ...data, performedBy: "ADMIN" });
-  if (apiRow) {
+export async function addTollPlaza(
+  data: Pick<TollPlaza, "name" | "route" | "location">,
+): Promise<{ plaza: TollPlaza; plazas: TollPlaza[] }> {
+  if (isApiConfigured()) {
+    const apiRow = await apiPostJson<any>("admin/plazas", {
+      ...data,
+      performedBy: "ADMIN",
+    });
     const plaza = normalisePlaza(apiRow);
-    const cached = await getTollPlazas();
-    if (!cached.some((p) => p.id === plaza.id)) {
-      await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify([...cached, plaza]));
-    }
-    return plaza;
+    const plazas = await syncPlazasFromApi();
+    return { plaza: plazas.find((p) => p.id === plaza.id) ?? plaza, plazas };
   }
+
   const plazas = await getTollPlazas();
-  const nums = plazas.map((x) => parseInt(x.id.replace("PLZ", ""), 10)).filter((n) => !isNaN(n));
+  const nums = plazas
+    .map((x) => parseInt(x.id.replace("PLZ", ""), 10))
+    .filter((n) => !isNaN(n));
   const nextId = `PLZ${String(nums.length > 0 ? Math.max(...nums) + 1 : 1).padStart(3, "0")}`;
-  const plaza: TollPlaza = { id: nextId, name: data.name, route: data.route || "—", location: data.location || "—", operatorId: "", operatorName: "Unassigned", workerCount: 0, activeDevices: 0, attendanceToday: 0, attendancePct: 0, status: "inactive", lastSync: "Never", createdAt: nowDate() };
-  await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify([...plazas, plaza]));
-  return plaza;
+  const plaza: TollPlaza = {
+    id: nextId,
+    name: data.name,
+    route: data.route || "—",
+    location: data.location || "—",
+    operatorId: "",
+    operatorName: "Unassigned",
+    workerCount: 0,
+    activeDevices: 0,
+    attendanceToday: 0,
+    attendancePct: 0,
+    status: "inactive",
+    lastSync: "Never",
+    createdAt: nowDate(),
+  };
+  const next = [...plazas, plaza];
+  await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify(next));
+  return { plaza, plazas: next };
 }
 
-export async function updateTollPlaza(id: string, changes: Partial<TollPlaza>): Promise<void> {
-  await apiPut(`admin/plazas/${id}`, { ...changes, performedBy: "ADMIN" });
+export async function updateTollPlaza(
+  id: string,
+  changes: Partial<TollPlaza>,
+): Promise<TollPlaza[] | void> {
+  if (isApiConfigured()) {
+    await apiPutJson(`admin/plazas/${encodeURIComponent(id)}`, {
+      ...changes,
+      performedBy: "ADMIN",
+    });
+    return syncPlazasFromApi();
+  }
+
   const plazas = await getTollPlazas();
-  await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify(plazas.map((p) => (p.id === id ? { ...p, ...changes } : p))));
+  await AsyncStorage.setItem(
+    PLAZAS_KEY,
+    JSON.stringify(plazas.map((p) => (p.id === id ? { ...p, ...changes } : p))),
+  );
 }
 
-export async function deleteTollPlaza(id: string): Promise<void> {
-  await apiDelete(`admin/plazas/${id}`);
+export async function deleteTollPlaza(id: string): Promise<TollPlaza[] | void> {
+  if (isApiConfigured()) {
+    const result = await apiDeletePath(
+      `admin/plazas/${encodeURIComponent(id)}?performedBy=ADMIN`,
+    );
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return syncPlazasFromApi();
+  }
+
   const plazas = await getTollPlazas();
   await AsyncStorage.setItem(PLAZAS_KEY, JSON.stringify(plazas.filter((p) => p.id !== id)));
+}
+
+export async function deleteAdminDevice(deviceId: string): Promise<void> {
+  if (isApiConfigured()) {
+    await apiDeletePath(`admin/devices/${encodeURIComponent(deviceId)}?performedBy=ADMIN`);
+  }
 }
 
 /* ─── Operator CRUD ─── */
 
 export async function getOperators(): Promise<AdminOperator[]> {
-  const apiData = await apiGet<any[]>("admin/operators");
-  if (apiData) {
-    const ops = apiData.map(normaliseOperator);
-    await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(ops));
-    console.log(`[adminStore] getOperators (API) → ${ops.length}`);
-    return ops;
+  if (isApiConfigured()) {
+    await clearLegacyDemoCache();
+    return await syncOperatorsFromApi();
   }
-  await ensureSeeded();
-  const raw = await AsyncStorage.getItem(OPERATORS_KEY);
-  const ops: AdminOperator[] = raw ? JSON.parse(raw) : [];
-  console.log(`[adminStore] getOperators (cache) → ${ops.length}`);
-  return ops;
+  await ensureDemoSeeded();
+  return (await readCache<AdminOperator[]>(OPERATORS_KEY)) ?? [];
 }
 
-export async function addOperator(data: Omit<AdminOperator, "id" | "createdAt" | "lastLogin" | "loginCount" | "deviceCount">): Promise<AdminOperator> {
-  const apiRow = await apiPost<any>("admin/operators", { ...data, performedBy: "ADMIN" });
-  if (apiRow) return normaliseOperator(apiRow);
+export type CreateOperatorPayload = Omit<
+  AdminOperator,
+  "id" | "createdAt" | "lastLogin" | "loginCount" | "deviceCount"
+> & { password: string };
+
+export async function addOperator(
+  data: CreateOperatorPayload,
+): Promise<{ operator: AdminOperator; operators: AdminOperator[] }> {
+  const { password, ...operatorFields } = data;
+
+  if (isApiConfigured()) {
+    const apiRow = await apiPostJson<any>("admin/operators", {
+      ...operatorFields,
+      userId: operatorFields.userId.toUpperCase(),
+      password,
+      performedBy: "ADMIN",
+    });
+    const created = normaliseOperator(apiRow);
+    const operators = await syncOperatorsFromApi();
+    return {
+      operator: operators.find((o) => o.userId === created.userId) ?? created,
+      operators,
+    };
+  }
+
   const ops = await getOperators();
-  const op: AdminOperator = { id: data.userId, userId: data.userId.toUpperCase(), name: data.name, mobile: data.mobile, email: data.email, plazaId: data.plazaId, plazaName: data.plazaName, status: "pending", lastLogin: "Never", loginCount: 0, deviceCount: 0, createdAt: nowDate() };
-  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify([op, ...ops]));
-  return op;
+  const op: AdminOperator = {
+    id: data.userId.toUpperCase(),
+    userId: data.userId.toUpperCase(),
+    name: data.name,
+    mobile: data.mobile,
+    email: data.email,
+    plazaId: data.plazaId,
+    plazaName: data.plazaName,
+    status: data.status ?? "active",
+    lastLogin: "Never",
+    loginCount: 0,
+    deviceCount: 0,
+    createdAt: nowDate(),
+  };
+  const operators = [op, ...ops];
+  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(operators));
+  return { operator: op, operators };
 }
 
-export async function updateOperator(id: string, changes: Partial<AdminOperator>): Promise<void> {
-  await apiPut(`admin/operators/${id}`, { ...changes, performedBy: "ADMIN" });
+export type UpdateOperatorPayload = Partial<AdminOperator> & { password?: string };
+
+export async function updateOperator(
+  id: string,
+  changes: UpdateOperatorPayload,
+): Promise<AdminOperator[] | void> {
+  const userId = id.toUpperCase();
+  const { password, ...localChanges } = changes;
+  const body: Record<string, unknown> = { ...localChanges, performedBy: "ADMIN" };
+  if (password) body.password = password;
+
+  if (isApiConfigured()) {
+    await apiPutJson(`admin/operators/${encodeURIComponent(userId)}`, body);
+    return syncOperatorsFromApi();
+  }
+
   const ops = await getOperators();
-  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(ops.map((o) => (o.id === id ? { ...o, ...changes } : o))));
+  const operators = ops.map((o) =>
+    o.id === userId || o.userId === userId ? { ...o, ...localChanges } : o,
+  );
+  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(operators));
+  return operators;
 }
 
-export async function deleteOperator(id: string): Promise<void> {
+export async function deleteOperator(id: string): Promise<AdminOperator[] | void> {
+  const userId = id.toUpperCase();
+
+  if (isApiConfigured()) {
+    const result = await apiDeletePath(
+      `admin/operators/${encodeURIComponent(userId)}?performedBy=ADMIN`,
+    );
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return syncOperatorsFromApi();
+  }
+
   const ops = await getOperators();
-  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(ops.filter((o) => o.id !== id)));
+  const operators = ops.filter((o) => o.id !== userId && o.userId !== userId);
+  await AsyncStorage.setItem(OPERATORS_KEY, JSON.stringify(operators));
+  return operators;
 }
 
 /* ─── Security Events ─── */
 
 export async function getSecurityEvents(): Promise<SecurityEvent[]> {
-  const apiData = await apiGet<any[]>("admin/security-events");
-  if (apiData) {
+  if (!isApiConfigured()) return [];
+  try {
+    const apiData = await apiGetJson<any[]>("admin/security-events");
     return apiData.map((e) => ({
-      id:           String(e.id ?? ""),
-      type:         (e.eventType as SecurityEvent["type"]) ?? "unauthorized_device",
-      description:  e.description ?? "",
-      deviceId:     e.deviceId ?? undefined,
-      operatorId:   e.operatorId ?? undefined,
+      id: String(e.id ?? ""),
+      type: (e.eventType as SecurityEvent["type"]) ?? "unauthorized_device",
+      description: e.description ?? "",
+      deviceId: e.deviceId ?? undefined,
+      operatorId: e.operatorId ?? undefined,
       operatorName: e.operatorName ?? undefined,
-      severity:     (e.severity as SecurityEvent["severity"]) ?? "medium",
-      timestamp:    e.createdAt ? new Date(e.createdAt).toLocaleString("en-IN") : "Unknown",
-      resolved:     Boolean(e.resolved),
+      severity: (e.severity as SecurityEvent["severity"]) ?? "medium",
+      timestamp: e.createdAt ? new Date(e.createdAt).toLocaleString("en-IN") : "Unknown",
+      resolved: Boolean(e.resolved),
     }));
+  } catch {
+    return [];
   }
-  return [];
 }
 
 export async function resolveSecurityEvent(id: string): Promise<void> {
-  await apiPut(`admin/security-events/${id}/resolve`, { performedBy: "ADMIN" });
+  if (!isApiConfigured()) return;
+  await apiPutJson(`admin/security-events/${id}/resolve`, { performedBy: "ADMIN" });
 }
 
 /* ─── Audit Logs ─── */
 
 export async function getAuditLogs(): Promise<AuditLog[]> {
-  const apiData = await apiGet<any[]>("admin/audit-logs");
-  if (apiData) {
+  if (!isApiConfigured()) return [];
+  try {
+    const apiData = await apiGetJson<any[]>("admin/audit-logs");
     return apiData.map((l) => ({
-      id:          String(l.id ?? ""),
-      action:      l.action ?? "",
+      id: String(l.id ?? ""),
+      action: l.action ?? "",
       performedBy: l.performedBy ?? "",
-      targetType:  l.targetType ?? "",
-      targetId:    l.targetId ?? "",
-      details:     l.details ?? "",
-      timestamp:   l.createdAt ? new Date(l.createdAt).toLocaleString("en-IN") : "Unknown",
+      targetType: l.targetType ?? "",
+      targetId: l.targetId ?? "",
+      details: l.details ?? "",
+      timestamp: l.createdAt ? new Date(l.createdAt).toLocaleString("en-IN") : "Unknown",
     }));
+  } catch {
+    return [];
   }
-  return [];
 }

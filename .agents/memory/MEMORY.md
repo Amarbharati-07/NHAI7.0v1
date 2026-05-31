@@ -1,4 +1,0 @@
-- [MaterialIcons naming convention](material-icons-naming.md) — @expo/vector-icons MaterialIcons uses HYPHENS not underscores (e.g. `check-circle`, not `check_circle`)
-- [SpectraID icon standard](spectra-icon-standard.md) — All components must use MaterialIcons; Ionicons font still preloaded in _layout for legacy screens
-- [Admin API + DB schema](admin-api-schema.md) — 5 admin tables (toll_plazas, operators, devices, security_events, audit_logs) wired to /api/admin/* routes; db package has no build script — exports directly from src
-- [Liveness camera detection wiring](liveness-detection-wiring.md) — detection session useEffect depends on [phase, stepIndex, modelReady]; passes handleConfirm directly (not via ref) so closure is always fresh when session restarts

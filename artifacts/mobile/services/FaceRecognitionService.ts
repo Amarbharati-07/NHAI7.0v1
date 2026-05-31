@@ -79,7 +79,6 @@ export async function initModels(): Promise<void> {
     mobilenetModel = await mn.load({ version: 2, alpha: 0.5 });
 
     isInitialised = true;
-    console.log("[FaceRecognition] Models loaded ✓ BlazeFace + MobileNet v2 α0.5");
   } catch (err) {
     console.error("[FaceRecognition] Model load failed:", err);
     isInitialising = false;
@@ -208,7 +207,6 @@ export async function registerWorkerFace(
     await saveFaceEmbedding({ workerId, workerIdCode, embedding: JSON.stringify(Array.from(embedding)), pose });
 
     storedEmbeddings.push({ workerId, workerIdCode, workerName, embedding });
-    console.log(`[FaceRecognition] Registered embedding for ${workerName} (${workerIdCode}) pose=${pose}`);
   } finally {
     tf.dispose(imgTensor);
   }
@@ -231,7 +229,6 @@ export async function loadStoredEmbeddings(): Promise<void> {
       });
     } catch {}
   }
-  console.log(`[FaceRecognition] Loaded ${storedEmbeddings.length} stored embeddings`);
 }
 
 /* ─── Identify face from camera snapshot ─── */

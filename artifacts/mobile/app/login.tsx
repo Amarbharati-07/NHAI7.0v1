@@ -73,13 +73,13 @@ export default function LoginScreen() {
     }
     setLoading(true);
     setError("");
-    const success = await login(userId.trim(), password);
+    const result = await login(userId.trim(), password);
     setLoading(false);
-    if (success) {
+    if (result.ok) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace("/dashboard");
     } else {
-      setError("Invalid User ID or Password. Please try again.");
+      setError(result.error ?? "Invalid User ID or Password. Please try again.");
       shake();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }

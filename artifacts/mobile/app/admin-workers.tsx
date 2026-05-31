@@ -88,7 +88,7 @@ export default function AdminWorkersScreen() {
   const load = useCallback(async () => {
     const [ws, s] = await Promise.all([getWorkers(), getAttendanceStats()]);
     setWorkers(ws);
-    setStats({ total: s.total, present: s.present, absent: s.absent });
+    setStats({ total: s.activeWorkers, present: s.present, absent: s.absent });
   }, []);
 
   useEffect(() => { load(); }, [load]);

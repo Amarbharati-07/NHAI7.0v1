@@ -53,6 +53,7 @@ export const tollPlazasTable = pgTable("toll_plazas", {
 export const operatorsTable = pgTable("operators", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().unique(),
+  passwordHash: text("password_hash"),
   name: text("name").notNull(),
   mobile: text("mobile").default(""),
   email: text("email").default(""),

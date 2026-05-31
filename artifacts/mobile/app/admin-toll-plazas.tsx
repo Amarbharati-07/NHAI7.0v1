@@ -1,7 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
-import React, { useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -42,9 +42,18 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
           <Text style={[styles.plazaName, { color: colors.foreground }]}>{plaza.name}</Text>
           <Text style={[styles.plazaRoute, { color: colors.textMuted }]}>{plaza.route} • {plaza.location}</Text>
         </View>
-        <View style={[styles.statusPill, { backgroundColor: meta.color + "22" }]}>
-          <Ionicons name={meta.icon} size={12} color={meta.color} />
-          <Text style={[styles.statusPillText, { color: meta.color }]}>{meta.label}</Text>
+        <View style={styles.cardHeaderActions}>
+          <View style={[styles.statusPill, { backgroundColor: meta.color + "22" }]}>
+            <Ionicons name={meta.icon} size={12} color={meta.color} />
+            <Text style={[styles.statusPillText, { color: meta.color }]}>{meta.label}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.deleteIconBtn, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "33" }]}
+            onPress={() => onAction("delete", plaza)}
+            accessibilityLabel="Delete toll plaza"
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -101,6 +110,10 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
           <Ionicons name="stats-chart-outline" size={15} color="#3B82F6" />
           <Text style={[styles.actionBtnText, { color: "#3B82F6" }]}>Monitor</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.destructive + "18" }]} onPress={() => onAction("delete", plaza)}>
+          <Ionicons name="trash-outline" size={15} color={colors.destructive} />
+          <Text style={[styles.actionBtnText, { color: colors.destructive }]}>Delete</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -109,7 +122,14 @@ function PlazaCard({ plaza, onAction }: { plaza: TollPlaza; onAction: (action: s
 export default function AdminTollPlazasScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { plazas, addPlaza, updatePlaza, loading } = useAdminData();
+  const { plazas, addPlaza, updatePlaza, deletePlaza, loading, refresh, apiOnline, apiError } =
+    useAdminData();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
 
   const [filter, setFilter]   = useState<FilterType>("all");
   const [search, setSearch]   = useState("");
@@ -167,7 +187,7 @@ export default function AdminTollPlazasScreen() {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } catch (e) {
               console.error("[admin-toll-plazas] activate error:", e);
-              Alert.alert("Error", "Failed to activate plaza. Please try again.");
+              Alert.alert("Error", e instanceof Error ? e.message : "Failed to activate plaza.");
             }
           },
         },
@@ -188,7 +208,7 @@ export default function AdminTollPlazasScreen() {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
               } catch (e) {
                 console.error("[admin-toll-plazas] deactivate error:", e);
-                Alert.alert("Error", "Failed to deactivate plaza. Please try again.");
+                Alert.alert("Error", e instanceof Error ? e.message : "Failed to deactivate plaza.");
               }
             },
           },
@@ -198,6 +218,31 @@ export default function AdminTollPlazasScreen() {
     } else if (action === "monitor") {
       setMonitorPlaza(plaza);
       setShowMonitorModal(true);
+
+    } else if (action === "delete") {
+      Alert.alert(
+        "Delete Toll Plaza",
+        `Permanently delete "${plaza.name}" (${plaza.id})? This cannot be undone.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await deletePlaza(plaza.id);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              } catch (e) {
+                console.error("[admin-toll-plazas] delete error:", e);
+                Alert.alert(
+                  "Delete failed",
+                  e instanceof Error ? e.message : "Could not delete toll plaza.",
+                );
+              }
+            },
+          },
+        ],
+      );
     }
   };
 
@@ -212,35 +257,35 @@ export default function AdminTollPlazasScreen() {
         location:     editLocation.trim() || editPlaza.location,
         operatorName: editOperatorName.trim() || editPlaza.operatorName,
       });
-      console.log("[admin-toll-plazas] updatePlaza success:", editPlaza.id);
       setShowEditModal(false);
       setEditPlaza(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.error("[admin-toll-plazas] updatePlaza error:", e);
-      Alert.alert("Error", "Failed to save changes. Please try again.");
+      Alert.alert("Error", e instanceof Error ? e.message : "Failed to save changes.");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleRegisterPlaza = async () => {
     if (!newName.trim()) { Alert.alert("Error", "Plaza name is required"); return; }
     setSaving(true);
     try {
-      const plaza = await addPlaza({
+      await addPlaza({
         name:     newName.trim(),
         route:    newRoute.trim(),
         location: newLocation.trim(),
       });
-      console.log("[admin-toll-plazas] addPlaza success:", plaza.id, plaza.name);
       setNewName(""); setNewRoute(""); setNewLocation("");
       setShowAddModal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.error("[admin-toll-plazas] addPlaza error:", e);
-      Alert.alert("Error", "Failed to register plaza. Please try again.");
+      Alert.alert("Error", e instanceof Error ? e.message : "Failed to register plaza.");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const bottomPad = Platform.OS === "web" ? 24 : insets.bottom + 16;
@@ -250,7 +295,26 @@ export default function AdminTollPlazasScreen() {
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Toll Plaza Management" showBack onBack={() => router.back()} />
 
-        {loading && (
+        {!apiOnline && apiError ? (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginTop: 8,
+              padding: 12,
+              borderRadius: 10,
+              backgroundColor: colors.destructive + "14",
+              borderWidth: 1,
+              borderColor: colors.destructive + "44",
+            }}
+          >
+            <Text style={{ color: colors.destructive, fontSize: 13, fontWeight: "600" }}>
+              API offline — changes will not be saved
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>{apiError}</Text>
+          </View>
+        ) : null}
+
+        {loading && plazas.length === 0 && (
           <View style={{ padding: 12, alignItems: "center" }}>
             <ActivityIndicator size="small" color={colors.primary} />
           </View>
@@ -307,7 +371,7 @@ export default function AdminTollPlazasScreen() {
           {filtered.length === 0 && !loading && (
             <View style={[styles.emptyState, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}>
               <Ionicons name="business-outline" size={40} color={colors.textMuted} />
-              <Text style={[styles.emptyText, { color: colors.textMuted }]}>No plazas found</Text>
+              <Text style={[styles.emptyText, { color: colors.textMuted }]}>No Plazas Found</Text>
             </View>
           )}
         </ScrollView>
@@ -512,8 +576,10 @@ const styles = StyleSheet.create({
   operatorRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1 },
   operatorAvatar: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
   operatorName: { fontSize: 13 },
-  actionsRow: { flexDirection: "row", borderTopWidth: 1, padding: 10, gap: 8 },
-  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 8, borderRadius: 8 },
+  cardHeaderActions: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  deleteIconBtn: { width: 36, height: 36, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  actionsRow: { flexDirection: "row", flexWrap: "wrap", borderTopWidth: 1, padding: 10, gap: 8 },
+  actionBtn: { width: "48%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 8, borderRadius: 8 },
   actionBtnText: { fontSize: 12, fontWeight: "600" },
   emptyState: { alignItems: "center", justifyContent: "center", padding: 40, borderWidth: 1, gap: 10 },
   emptyText: { fontSize: 14 },

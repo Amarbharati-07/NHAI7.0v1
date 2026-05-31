@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -96,21 +96,36 @@ export default function DashboardScreen() {
   const [stats, setStats] = useState<Stats>({ total: 0, present: 0, absent: 0, pending: 0 });
   const [refreshing, setRefreshing] = useState(false);
   const isAdmin = user?.role === "admin";
-  const { kpis, plazas, operators, refresh: refreshAdminData } = useAdminData();
+  const { kpis, plazas, operators, devices, refresh: refreshAdminData } = useAdminData();
   const unresolvedAlerts = MOCK_SECURITY_EVENTS.filter((e) => !e.resolved);
   const activeOps = operators.filter((o) => o.status === "active");
 
   const loadStats = useCallback(async () => {
     const s = await getAttendanceStats();
-    setStats(s);
+    setStats({
+      total: s.activeWorkers,
+      present: s.present,
+      absent: s.absent,
+      pending: s.pending,
+    });
   }, []);
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
+  useFocusEffect(
+    useCallback(() => {
+      void loadStats();
+      void refreshAdminData();
+    }, [loadStats, refreshAdminData]),
+  );
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadStats(), refreshAdminData()]);
-    setRefreshing(false);
+    try {
+      await Promise.all([loadStats(), refreshAdminData()]);
+    } finally {
+      setRefreshing(false);
+    }
   }, [loadStats, refreshAdminData]);
 
   const now = new Date();
@@ -159,8 +174,8 @@ export default function DashboardScreen() {
               {/* KPI Row 1 */}
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Infrastructure Overview</Text>
               <View style={styles.kpiRow}>
-                <AdminKpiCard label="Toll Plazas" value={kpis.totalPlazas} icon="business" color={colors.accent} bg={colors.primary + "22"} badge={`${kpis.activePlazas} Active`} />
-                <AdminKpiCard label="Operators" value={kpis.totalOperators} icon="supervisor-account" color="#3B82F6" bg="#3B82F622" badge={`${kpis.activeOperators} Active`} />
+                <AdminKpiCard label="Toll Plazas" value={plazas.length} icon="business" color={colors.accent} bg={colors.primary + "22"} badge={`${kpis.activePlazas} Active`} />
+                <AdminKpiCard label="Operators" value={operators.length} icon="supervisor-account" color="#3B82F6" bg="#3B82F622" badge={`${kpis.activeOperators} Active`} />
                 <AdminKpiCard label="Total Workers" value={kpis.totalWorkers} icon="people" color={colors.success} bg={colors.successBg} />
               </View>
 
@@ -168,7 +183,7 @@ export default function DashboardScreen() {
               <View style={styles.kpiRow}>
                 <AdminKpiCard label="Present Today" value={kpis.presentToday} icon="check-circle" color={colors.success} bg={colors.successBg} />
                 <AdminKpiCard label="Absent Today" value={kpis.absentToday} icon="cancel" color={colors.destructive} bg={colors.destructive + "22"} />
-                <AdminKpiCard label="Active Devices" value={kpis.activeDevices} icon="smartphone" color={colors.warning} bg={colors.warningBg} />
+                <AdminKpiCard label="Active Devices" value={devices.filter((d) => d.status !== "inactive").length} icon="smartphone" color={colors.warning} bg={colors.warningBg} />
               </View>
 
               {/* KPI Row 3 */}

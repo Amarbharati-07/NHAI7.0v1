@@ -21,6 +21,7 @@ import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import UnauthorizedDeviceScreen from "@/components/UnauthorizedDeviceScreen";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminData } from "@/contexts/AdminDataContext";
 import {
   type FacePose,
   POSE_CONFIGS,
@@ -134,6 +135,7 @@ export default function RegisterWorkerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { refresh: refreshAdminData } = useAdminData();
   const sessionId = useRef(`sess_${Date.now()}`).current;
 
   const fullNameRef   = useRef<TextInput>(null);
@@ -202,6 +204,7 @@ export default function RegisterWorkerScreen() {
       });
       await saveFaceImagesToDb(workerId, sessionId);
       await clearSession(sessionId);
+      await refreshAdminData();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Success", `Worker ${form.fullName} registered successfully!`, [
         { text: "OK", onPress: () => router.back() },
@@ -209,8 +212,9 @@ export default function RegisterWorkerScreen() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       Alert.alert("Error", msg.includes("UNIQUE") ? "Worker ID already exists." : "Failed to register worker.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   /* Stable onChange handlers */

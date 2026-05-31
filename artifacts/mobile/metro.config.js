@@ -3,6 +3,19 @@ const path = require("path");
 
 const config = getDefaultConfig(__dirname);
 
+// Shim react-native-fs — it is listed as a peer dep of @tensorflow/tfjs-react-native
+// but is only used by bundleResourceIO (loading models from the bundle), which we don't
+// use.  Without this shim Metro fails to bundle attendance.tsx entirely.
+const rnFsShim = path.resolve(__dirname, "shims/react-native-fs.js");
+const origResolve = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === "react-native-fs") {
+    return { filePath: rnFsShim, type: "sourceFile" };
+  }
+  if (origResolve) return origResolve(context, moduleName, platform);
+  return context.resolveRequest(context, moduleName, platform);
+};
+
 // Allow Metro to bundle .wasm files (required by expo-sqlite on web)
 config.resolver.assetExts.push("wasm");
 

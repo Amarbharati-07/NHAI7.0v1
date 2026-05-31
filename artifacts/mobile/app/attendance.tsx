@@ -53,6 +53,7 @@ export default function AttendanceScreen() {
   const [matched, setMatched] = useState<MatchedWorker | null>(null);
   const [modelReady, setModelReady]   = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
+  const [modelError, setModelError]     = useState<string | null>(null);
 
   const scanLine    = useSharedValue(0);
   const idCardScale = useSharedValue(0.85);
@@ -83,14 +84,16 @@ export default function AttendanceScreen() {
   useEffect(() => {
     if (Platform.OS === "web") return;
     setModelLoading(true);
+    setModelError(null);
     Promise.all([
       FaceRecognitionService.initModels(),
       FaceRecognitionService.loadStoredEmbeddings(),
     ])
       .then(() => { setModelReady(true); setModelLoading(false); })
       .catch((err) => {
-        console.warn("[Attendance] AI model load failed — using simulation:", err);
+        console.warn("[Attendance] AI model load failed:", err);
         setModelLoading(false);
+        setModelError("Face recognition models could not load. Check storage and retry.");
       });
 
     return () => {
@@ -164,7 +167,7 @@ export default function AttendanceScreen() {
         base64: false,
         skipProcessing: true,
       });
-      if (!isScanningRef.current) return;
+      if (!isScanningRef.current || !photo?.uri) return;
 
       const result = await FaceRecognitionService.identifyFromCamera(photo.uri);
       if (!isScanningRef.current) return;
@@ -197,8 +200,24 @@ export default function AttendanceScreen() {
 
     const useRealAI = Platform.OS !== "web" && modelReady && cameraRef.current && permission?.granted;
 
+    if (Platform.OS !== "web" && !modelReady) {
+      if (modelError) {
+        isScanningRef.current = false;
+        setPhase("no_match");
+        return;
+      }
+      if (modelLoading) {
+        return;
+      }
+    }
+
     if (!useRealAI) {
-      runSimulation();
+      if (Platform.OS === "web") {
+        runSimulation();
+      } else {
+        isScanningRef.current = false;
+        setPhase("no_match");
+      }
       return;
     }
 
@@ -211,7 +230,7 @@ export default function AttendanceScreen() {
     }, 12000);
 
     runCapture();
-  }, [phase, modelReady, permission, runSimulation, runCapture]);
+  }, [phase, modelReady, modelLoading, modelError, permission, runSimulation, runCapture]);
 
   const cancelScan = useCallback(() => {
     isScanningRef.current = false;
@@ -323,7 +342,9 @@ export default function AttendanceScreen() {
                     <>
                       <MaterialCommunityIcons name="face-recognition" size={64} color={colors.primary + "aa"} />
                       {phase === "no_match" ? (
-                        <Text style={[styles.scanHint, { color: "#F97316" }]}>No face matched — try again</Text>
+                        <Text style={[styles.scanHint, { color: "#F97316" }]}>
+                          {modelError ?? "No face matched — try again"}
+                        </Text>
                       ) : (
                         <Text style={[styles.scanHint, { color: "#ffffffbb" }]}>Position face in frame</Text>
                       )}
@@ -349,13 +370,18 @@ export default function AttendanceScreen() {
                       Offline AI active — BlazeFace + MobileNet v2 (~5.8 MB)
                     </Text>
                   </>
+                ) : modelError ? (
+                  <>
+                    <Ionicons name="warning-outline" size={16} color={colors.destructive} />
+                    <Text style={[styles.noticeText, { color: colors.destructive }]}>{modelError}</Text>
+                  </>
                 ) : (
                   <>
                     <Ionicons name="information-circle-outline" size={16} color={colors.accent} />
                     <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
                       {Platform.OS === "web"
                         ? "Simulation mode — real AI runs on mobile device"
-                        : "AI unavailable — using demo simulation"}
+                        : "Face models not loaded — connect once online, then retry"}
                     </Text>
                   </>
                 )}

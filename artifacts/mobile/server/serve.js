@@ -13,9 +13,12 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const STATIC_ROOT = path.resolve(__dirname, "..", "static-build");
+const WEB_ROOT = path.resolve(__dirname, "..", "dist");
+const STATIC_BUILD_ROOT = path.resolve(__dirname, "..", "static-build");
 const TEMPLATE_PATH = path.resolve(__dirname, "templates", "landing-page.html");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
+const hasWebBuild = fs.existsSync(path.join(WEB_ROOT, "index.html"));
+const STATIC_ROOT = hasWebBuild ? WEB_ROOT : STATIC_BUILD_ROOT;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -92,6 +95,14 @@ function serveStaticFile(urlPath, res) {
   }
 
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    if (hasWebBuild) {
+      const indexPath = path.join(STATIC_ROOT, "index.html");
+      const content = fs.readFileSync(indexPath);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(content);
+      return;
+    }
+
     res.writeHead(404);
     res.end("Not Found");
     return;
@@ -115,6 +126,10 @@ const server = http.createServer((req, res) => {
     pathname = pathname.slice(basePath.length) || "/";
   }
 
+  if (hasWebBuild) {
+    return serveStaticFile(pathname, res);
+  }
+
   if (pathname === "/" || pathname === "/manifest") {
     const platform = req.headers["expo-platform"];
     if (platform === "ios" || platform === "android") {
@@ -130,6 +145,7 @@ const server = http.createServer((req, res) => {
 });
 
 const port = parseInt(process.env.PORT || "3000", 10);
-server.listen(port, "0.0.0.0", () => {
+const host = process.env.HOST || "127.0.0.1";
+server.listen(port, host, () => {
   console.log(`Serving static Expo build on port ${port}`);
 });

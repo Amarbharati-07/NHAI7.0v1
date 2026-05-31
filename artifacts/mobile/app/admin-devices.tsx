@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
   ScrollView,
@@ -57,7 +59,7 @@ function DeviceRegistryCard({
   device, onAction, onViewHistory,
 }: {
   device: RegisteredDevice;
-  onAction: (action: "allocate" | "block" | "unblock" | "deactivate", d: RegisteredDevice) => void;
+  onAction: (action: "allocate" | "block" | "unblock" | "deactivate" | "delete", d: RegisteredDevice) => void;
   onViewHistory: (d: RegisteredDevice) => void;
 }) {
   const colors = useColors();
@@ -104,6 +106,13 @@ function DeviceRegistryCard({
             <Text style={[rc.statusText, { color: meta.color }]}>{meta.label}</Text>
           </View>
           <View style={[rc.healthDot, { backgroundColor: healthColor }]} />
+          <TouchableOpacity
+            style={[rc.deleteIconBtn, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "33" }]}
+            onPress={() => onAction("delete", device)}
+            accessibilityLabel="Delete device"
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -203,6 +212,10 @@ function DeviceRegistryCard({
             <Text style={[rc.btnText, { color: colors.textMuted }]}>Deactivate</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity style={[rc.btn, { backgroundColor: colors.destructive + "18" }]} onPress={() => onAction("delete", device)}>
+          <Ionicons name="trash-outline" size={13} color={colors.destructive} />
+          <Text style={[rc.btnText, { color: colors.destructive }]}>Delete</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -297,6 +310,7 @@ type AlFilter  = "all" | "active" | "replaced" | "blocked";
 export default function AdminDevicesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { deleteDevice, plazas, operators, refresh: refreshAdminData } = useAdminData();
   const botPad = Platform.OS === "web" ? 24 : insets.bottom + 20;
 
   const [mainTab,   setMainTab]   = useState<MainTab>("registry");
@@ -343,13 +357,21 @@ export default function AdminDevicesScreen() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [d, a] = await Promise.all([getRegisteredDevices(), getAllocations()]);
-    setDevices(d);
-    setAllocs(a);
-    setLoading(false);
+    try {
+      const [d, a] = await Promise.all([getRegisteredDevices(), getAllocations()]);
+      setDevices(d);
+      setAllocs(a);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadData();
+      void refreshAdminData();
+    }, [loadData, refreshAdminData]),
+  );
 
   /* Open registration modal — tokens start empty until user explicitly opts in */
   const openRegModal = async () => {
@@ -408,11 +430,13 @@ export default function AdminDevicesScreen() {
       setShowRegModal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await loadData();
+      await refreshAdminData();
       showSuccess(`Device "${regName}" registered as ${previewDevId}.`);
     } catch {
       /* silent – UI handles empty state */
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   /* ── Allocate Device ── */
@@ -443,13 +467,18 @@ export default function AdminDevicesScreen() {
       setAllocDeviceId(""); setAllocOpId("");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await loadData();
+      await refreshAdminData();
       showSuccess(`${device.id} allocated to ${operator.name}.`);
-    } catch { /* noop */ }
-    setSaving(false);
+    } catch { /* noop */ } finally {
+      setSaving(false);
+    }
   };
 
   /* ── Device Actions ── */
-  const handleDeviceAction = (action: "allocate" | "block" | "unblock" | "deactivate", device: RegisteredDevice) => {
+  const handleDeviceAction = (
+    action: "allocate" | "block" | "unblock" | "deactivate" | "delete",
+    device: RegisteredDevice,
+  ) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (action === "allocate") {
       setAllocDeviceId(device.id);
@@ -462,6 +491,35 @@ export default function AdminDevicesScreen() {
       setActionModal({ type: "deactivate", id: device.id, extra: "unblock" });
     } else if (action === "deactivate") {
       setActionModal({ type: "deactivate", id: device.id, extra: "deactivate" });
+    } else if (action === "delete") {
+      Alert.alert(
+        "Delete Device",
+        `Permanently delete ${device.id} (${device.deviceName})? All allocations for this device will be removed.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: async () => {
+              setSaving(true);
+              try {
+                await deleteDevice(device.id);
+                await loadData();
+                showSuccess(`${device.id} deleted.`);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              } catch (e) {
+                console.error("[admin-devices] delete error:", e);
+                Alert.alert(
+                  "Delete failed",
+                  e instanceof Error ? e.message : "Could not delete device.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            },
+          },
+        ],
+      );
     }
   };
 
@@ -547,15 +605,16 @@ export default function AdminDevicesScreen() {
       setActionModal(null);
       setActionReason(""); setReplaceDevId(""); setReassignOpId("");
       await loadData();
-    } catch { /* noop */ }
-    setSaving(false);
+      await refreshAdminData();
+    } catch { /* noop */ } finally {
+      setSaving(false);
+    }
   };
 
   /* ── Derived data ── */
   const filteredDevices = devices.filter((d) => regFilter === "all" ? true : d.status === regFilter);
   const filteredAllocs  = allocs.filter((a) => alFilter === "all" ? true : a.status === alFilter);
   const availableDevs   = devices.filter((d) => d.status === "available");
-  const { plazas, operators } = useAdminData();
   const activeOperators = operators.filter((o) => o.status === "active");
 
   const kpis = [
@@ -611,7 +670,7 @@ export default function AdminDevicesScreen() {
             ))}
           </View>
 
-          {loading ? (
+          {loading && devices.length === 0 ? (
             <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
           ) : mainTab === "registry" ? (
             <>
@@ -919,7 +978,7 @@ export default function AdminDevicesScreen() {
                   >
                     <Text style={[st.plazaChipText, { color: regPlazaId === "" ? colors.primary : colors.textSecondary }]}>None</Text>
                   </TouchableOpacity>
-                  {plazas.filter((p) => p.status !== "inactive").map((plaza) => (
+                  {plazas.map((plaza) => (
                     <TouchableOpacity
                       key={plaza.id}
                       style={[st.plazaChip, { backgroundColor: regPlazaId === plaza.id ? colors.primary + "18" : colors.surface, borderColor: regPlazaId === plaza.id ? colors.primary : colors.border }]}
@@ -1342,8 +1401,9 @@ const rc = StyleSheet.create({
   expandLabel: { flex: 1, fontSize: 11 },
   tokenExpanded: { paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1 },
   tokenFull: { fontSize: 11, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" },
-  actions: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
-  btn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
+  deleteIconBtn: { width: 36, height: 36, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center", marginTop: 4 },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
+  btn: { width: "48%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 7, borderRadius: 8 },
   btnText: { fontSize: 12, fontWeight: "600" },
 });
 

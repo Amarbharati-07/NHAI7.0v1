@@ -1,4 +1,5 @@
 import NetInfo from "@react-native-community/netinfo";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   getSyncQueue,
   markSynced,
@@ -7,6 +8,7 @@ import {
 } from "./database";
 import { fetchAwsStatus, runPurge, getLastPurge, type AwsStatus } from "./AwsSyncService";
 import { getApiBase } from "./apiConfig";
+import { bootstrapOperatorOfflineData } from "./offlineBootstrapService";
 
 export type { AwsStatus };
 
@@ -53,13 +55,28 @@ class SyncService {
   };
   private netInfoUnsub: (() => void) | null = null;
 
+  private async onConnectivityRestored() {
+    try {
+      const stored = await AsyncStorage.getItem("@spectra_user");
+      if (stored) {
+        const u = JSON.parse(stored) as { role?: string; userId?: string };
+        if (u.role === "operator" && u.userId) {
+          await bootstrapOperatorOfflineData(u.userId);
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+    this.loadAwsStatus();
+    this.sync();
+  }
+
   start() {
     NetInfo.fetch().then((s) => {
       const online = !!s.isConnected && !!s.isInternetReachable;
       this.setState({ isOnline: online });
       if (online) {
-        this.loadAwsStatus();
-        this.sync();
+        void this.onConnectivityRestored();
       }
     });
 
@@ -68,8 +85,7 @@ class SyncService {
       const online = !!s.isConnected && !!s.isInternetReachable;
       this.setState({ isOnline: online });
       if (!wasOnline && online) {
-        this.loadAwsStatus();
-        this.sync();
+        void this.onConnectivityRestored();
       }
     });
 
@@ -166,7 +182,7 @@ class SyncService {
       const firstAttendance = attendance[0] as any;
       const firstWorker = workers[0] as any;
 
-      const response = await fetch(`${getApiBaseUrl()}/sync`, {
+      const response = await fetch(`${getApiBase()}/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

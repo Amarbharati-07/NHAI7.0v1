@@ -10,14 +10,24 @@ import {
   attendanceTable,
 } from "@workspace/db/schema";
 import { eq, desc, sql, count } from "drizzle-orm";
+import { requireAdminApiKey } from "../middleware/adminAuth";
+import { hashPassword } from "./auth";
 
 const router = Router();
+router.use(requireAdminApiKey);
 
-/* ─── Seed helper (runs once to populate demo data) ─── */
+function stripOperatorSecrets<T extends { passwordHash?: string | null }>(row: T) {
+  const { passwordHash: _removed, ...safe } = row;
+  return safe;
+}
+
+/* ─── Optional demo seed (never runs on GET — use POST /admin/seed-demo) ─── */
 
 async function seedAdminData() {
   const existing = await db.select({ c: count() }).from(tollPlazasTable);
   if ((existing[0]?.c ?? 0) > 0) return;
+
+  const demoOperatorPasswordHash = await hashPassword("opr123");
 
   await db.insert(tollPlazasTable).values([
     { plazaId: "PLZ001", name: "NH-48 Gurugram Plaza", route: "NH-48", location: "Gurugram, Haryana", operatorId: "OPR001", operatorName: "Rajan Mehta", workerCount: 32, activeDevices: 2, attendanceToday: 30, attendancePct: 94, status: "active", lastSync: "Recently" },
@@ -28,11 +38,11 @@ async function seedAdminData() {
   ]).onConflictDoNothing();
 
   await db.insert(operatorsTable).values([
-    { userId: "OPR001", name: "Rajan Mehta",  mobile: "9811234567", email: "rajan@nhai.in",   plazaId: "PLZ001", plazaName: "NH-48 Gurugram Plaza", status: "active",    lastLogin: "Today, 08:15 AM", loginCount: 142, deviceCount: 1 },
-    { userId: "OPR002", name: "Kavita Joshi", mobile: "9822345678", email: "kavita@nhai.in",  plazaId: "PLZ002", plazaName: "NH-8 Manesar Plaza",   status: "active",    lastLogin: "Today, 09:02 AM", loginCount: 98,  deviceCount: 1 },
-    { userId: "OPR003", name: "Arun Patel",   mobile: "9833456789", email: "arun@nhai.in",    plazaId: "PLZ003", plazaName: "NH-44 Panipat Plaza",  status: "active",    lastLogin: "Today, 07:48 AM", loginCount: 87,  deviceCount: 1 },
-    { userId: "OPR004", name: "Shreya Singh", mobile: "9844567890", email: "shreya@nhai.in",  plazaId: "PLZ005", plazaName: "NH-24 Delhi Toll",     status: "suspended", lastLogin: "3 days ago",      loginCount: 54,  deviceCount: 1 },
-    { userId: "OPR005", name: "Vikram Rao",   mobile: "9855678901", email: "vikram@nhai.in",  plazaId: "",       plazaName: "Unassigned",           status: "pending",   lastLogin: "Never",           loginCount: 0,   deviceCount: 0 },
+    { userId: "OPR001", passwordHash: demoOperatorPasswordHash, name: "Rajan Mehta",  mobile: "9811234567", email: "rajan@nhai.in",   plazaId: "PLZ001", plazaName: "NH-48 Gurugram Plaza", status: "active",    lastLogin: "Today, 08:15 AM", loginCount: 142, deviceCount: 1 },
+    { userId: "OPR002", passwordHash: demoOperatorPasswordHash, name: "Kavita Joshi", mobile: "9822345678", email: "kavita@nhai.in",  plazaId: "PLZ002", plazaName: "NH-8 Manesar Plaza",   status: "active",    lastLogin: "Today, 09:02 AM", loginCount: 98,  deviceCount: 1 },
+    { userId: "OPR003", passwordHash: demoOperatorPasswordHash, name: "Arun Patel",   mobile: "9833456789", email: "arun@nhai.in",    plazaId: "PLZ003", plazaName: "NH-44 Panipat Plaza",  status: "active",    lastLogin: "Today, 07:48 AM", loginCount: 87,  deviceCount: 1 },
+    { userId: "OPR004", passwordHash: demoOperatorPasswordHash, name: "Shreya Singh", mobile: "9844567890", email: "shreya@nhai.in",  plazaId: "PLZ005", plazaName: "NH-24 Delhi Toll",     status: "suspended", lastLogin: "3 days ago",      loginCount: 54,  deviceCount: 1 },
+    { userId: "OPR005", passwordHash: demoOperatorPasswordHash, name: "Vikram Rao",   mobile: "9855678901", email: "vikram@nhai.in",  plazaId: "",       plazaName: "Unassigned",           status: "pending",   lastLogin: "Never",           loginCount: 0,   deviceCount: 0 },
   ]).onConflictDoNothing();
 
   await db.insert(devicesTable).values([
@@ -60,9 +70,23 @@ async function seedAdminData() {
 
 /* ─── Dashboard Stats ─── */
 
-router.get("/admin/stats", async (_req, res) => {
+router.post("/admin/seed-demo", async (_req, res) => {
+  if (process.env.ALLOW_DEMO_SEED !== "true") {
+    return void res.status(403).json({
+      error: "Demo seed disabled. Set ALLOW_DEMO_SEED=true in api-server .env to enable.",
+    });
+  }
   try {
     await seedAdminData();
+    res.json({ ok: true, message: "Demo data seeded (skipped if plazas already exist)" });
+  } catch (err) {
+    console.error("[admin/seed-demo]", err);
+    res.status(500).json({ error: "Failed to seed demo data" });
+  }
+});
+
+router.get("/admin/stats", async (_req, res) => {
+  try {
     const today = new Date().toISOString().split("T")[0]!;
 
     const [plazas, operators, devices, unresolvedEvents, workers, attStats] = await Promise.all([
@@ -101,7 +125,6 @@ router.get("/admin/stats", async (_req, res) => {
 
 router.get("/admin/plazas", async (_req, res) => {
   try {
-    await seedAdminData();
     const rows = await db.select().from(tollPlazasTable).orderBy(tollPlazasTable.name);
     res.json(rows);
   } catch {
@@ -138,12 +161,27 @@ router.put("/admin/plazas/:plazaId", async (req, res) => {
 
 router.delete("/admin/plazas/:plazaId", async (req, res) => {
   try {
-    const { plazaId } = req.params;
-    await db.delete(tollPlazasTable).where(eq(tollPlazasTable.plazaId, plazaId!));
-    await db.insert(auditLogsTable).values({ action: "Plaza Deleted", performedBy: req.body.performedBy ?? "ADMIN", targetType: "TollPlaza", targetId: plazaId!, details: "" });
+    const plazaId = String(req.params.plazaId ?? "");
+    const performedBy = String(req.query.performedBy ?? "ADMIN");
+    const removed = await db
+      .delete(tollPlazasTable)
+      .where(eq(tollPlazasTable.plazaId, plazaId))
+      .returning({ plazaId: tollPlazasTable.plazaId });
+    if (removed.length === 0) {
+      return void res.status(404).json({ error: "Plaza not found" });
+    }
+    await db.insert(auditLogsTable).values({
+      action: "Plaza Deleted",
+      performedBy,
+      targetType: "TollPlaza",
+      targetId: plazaId,
+      details: `Deleted ${plazaId}`,
+    });
     res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Failed to delete plaza" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to delete plaza";
+    console.error("[admin/plazas DELETE]", err);
+    res.status(500).json({ error: message });
   }
 });
 
@@ -151,9 +189,8 @@ router.delete("/admin/plazas/:plazaId", async (req, res) => {
 
 router.get("/admin/operators", async (_req, res) => {
   try {
-    await seedAdminData();
     const rows = await db.select().from(operatorsTable).orderBy(operatorsTable.name);
-    res.json(rows);
+    res.json(rows.map(stripOperatorSecrets));
   } catch {
     res.status(500).json({ error: "Failed to fetch operators" });
   }
@@ -161,27 +198,105 @@ router.get("/admin/operators", async (_req, res) => {
 
 router.post("/admin/operators", async (req, res) => {
   try {
-    const { userId, name, mobile, email, plazaId, plazaName } = req.body;
+    const { userId, name, mobile, email, plazaId, plazaName, password, status } = req.body;
     if (!userId || !name) return void res.status(400).json({ error: "userId and name required" });
-    const [row] = await db.insert(operatorsTable).values({ userId: userId.toUpperCase(), name, mobile: mobile ?? "", email: email ?? "", plazaId: plazaId ?? "", plazaName: plazaName ?? "Unassigned", status: "pending" }).returning();
-    await db.insert(auditLogsTable).values({ action: "Operator Created", performedBy: req.body.performedBy ?? "ADMIN", targetType: "Operator", targetId: userId, details: `${name} created` });
-    res.status(201).json(row);
-  } catch {
+    if (!password || String(password).length < 4) {
+      return void res.status(400).json({ error: "password is required (min 4 characters)" });
+    }
+    const uid = String(userId).toUpperCase();
+    const passwordHash = await hashPassword(String(password));
+    const [row] = await db.insert(operatorsTable).values({
+      userId: uid,
+      passwordHash,
+      name,
+      mobile: mobile ?? "",
+      email: email ?? "",
+      plazaId: plazaId ?? "",
+      plazaName: plazaName ?? "Unassigned",
+      status: status ?? "active",
+    }).returning();
+    await db.insert(auditLogsTable).values({ action: "Operator Created", performedBy: req.body.performedBy ?? "ADMIN", targetType: "Operator", targetId: uid, details: `${name} created` });
+    res.status(201).json(stripOperatorSecrets(row));
+  } catch (err) {
+    console.error("[admin/operators POST]", err);
     res.status(500).json({ error: "Failed to create operator" });
   }
 });
 
 router.put("/admin/operators/:userId", async (req, res) => {
   try {
-    const { userId } = req.params;
-    const { name, mobile, email, plazaId, plazaName, status } = req.body;
-    await db.update(operatorsTable)
-      .set({ ...(name && { name }), ...(mobile !== undefined && { mobile }), ...(email !== undefined && { email }), ...(plazaId !== undefined && { plazaId }), ...(plazaName !== undefined && { plazaName }), ...(status && { status }) })
-      .where(eq(operatorsTable.userId, userId!));
-    await db.insert(auditLogsTable).values({ action: "Operator Updated", performedBy: req.body.performedBy ?? "ADMIN", targetType: "Operator", targetId: userId!, details: JSON.stringify(req.body) });
+    const uid = String(req.params.userId ?? "").toUpperCase();
+    if (!uid) return void res.status(400).json({ error: "userId required" });
+
+    const { name, mobile, email, plazaId, plazaName, status, password } = req.body;
+    const updates: Record<string, unknown> = {
+      ...(name && { name }),
+      ...(mobile !== undefined && { mobile }),
+      ...(email !== undefined && { email }),
+      ...(plazaId !== undefined && { plazaId }),
+      ...(plazaName !== undefined && { plazaName }),
+      ...(status && { status }),
+    };
+    if (password && String(password).length >= 4) {
+      updates.passwordHash = await hashPassword(String(password));
+    }
+    if (Object.keys(updates).length === 0) {
+      return void res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    const updated = await db
+      .update(operatorsTable)
+      .set(updates)
+      .where(eq(operatorsTable.userId, uid))
+      .returning({ userId: operatorsTable.userId });
+
+    if (updated.length === 0) {
+      return void res.status(404).json({ error: "Operator not found" });
+    }
+
+    const action = password ? "Password Reset" : "Operator Updated";
+    const details = password
+      ? `Password reset for ${uid}`
+      : JSON.stringify(req.body);
+    await db.insert(auditLogsTable).values({
+      action,
+      performedBy: req.body.performedBy ?? "ADMIN",
+      targetType: "Operator",
+      targetId: uid,
+      details,
+    });
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    console.error("[admin/operators PUT]", err);
     res.status(500).json({ error: "Failed to update operator" });
+  }
+});
+
+router.delete("/admin/operators/:userId", async (req, res) => {
+  try {
+    const uid = String(req.params.userId ?? "").toUpperCase();
+    const performedBy = String(req.query.performedBy ?? "ADMIN");
+    if (!uid) return void res.status(400).json({ error: "userId required" });
+
+    const removed = await db
+      .delete(operatorsTable)
+      .where(eq(operatorsTable.userId, uid))
+      .returning({ userId: operatorsTable.userId });
+    if (removed.length === 0) {
+      return void res.status(404).json({ error: "Operator not found" });
+    }
+
+    await db.insert(auditLogsTable).values({
+      action: "Operator Deleted",
+      performedBy,
+      targetType: "Operator",
+      targetId: uid,
+      details: `Deleted operator ${uid}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[admin/operators DELETE]", err);
+    res.status(500).json({ error: "Failed to delete operator" });
   }
 });
 
@@ -189,7 +304,6 @@ router.put("/admin/operators/:userId", async (req, res) => {
 
 router.get("/admin/devices", async (_req, res) => {
   try {
-    await seedAdminData();
     const rows = await db.select().from(devicesTable).orderBy(desc(devicesTable.createdAt));
     res.json(rows);
   } catch {
@@ -224,11 +338,38 @@ router.put("/admin/devices/:deviceId", async (req, res) => {
   }
 });
 
+router.delete("/admin/devices/:deviceId", async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId ?? "");
+    const performedBy = String(req.query.performedBy ?? "ADMIN");
+    if (!deviceId) return void res.status(400).json({ error: "deviceId required" });
+
+    const removed = await db
+      .delete(devicesTable)
+      .where(eq(devicesTable.deviceId, deviceId))
+      .returning({ deviceId: devicesTable.deviceId });
+    if (removed.length === 0) {
+      return void res.status(404).json({ error: "Device not found" });
+    }
+
+    await db.insert(auditLogsTable).values({
+      action: "Device Deleted",
+      performedBy,
+      targetType: "Device",
+      targetId: deviceId,
+      details: `Deleted device ${deviceId}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[admin/devices DELETE]", err);
+    res.status(500).json({ error: "Failed to delete device" });
+  }
+});
+
 /* ─── Security Events ─── */
 
 router.get("/admin/security-events", async (_req, res) => {
   try {
-    await seedAdminData();
     const rows = await db.select().from(securityEventsTable).orderBy(desc(securityEventsTable.createdAt)).limit(50);
     res.json(rows);
   } catch {
@@ -262,7 +403,6 @@ router.put("/admin/security-events/:id/resolve", async (req, res) => {
 
 router.get("/admin/audit-logs", async (_req, res) => {
   try {
-    await seedAdminData();
     const rows = await db.select().from(auditLogsTable).orderBy(desc(auditLogsTable.createdAt)).limit(100);
     res.json(rows);
   } catch {

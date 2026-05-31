@@ -49,8 +49,21 @@ if (Platform.OS === "web" && typeof window !== "undefined") {
 
 export default function RootLayout() {
   useEffect(() => {
-    syncService.start();
-    return () => syncService.stop();
+    let cancelled = false;
+    (async () => {
+      if (Platform.OS !== "web") {
+        const { initDatabase } = await import("@/services/database");
+        await initDatabase();
+      }
+      if (!cancelled) syncService.start();
+    })().catch((err) => {
+      console.error("[RootLayout] database init failed:", err);
+      if (!cancelled) syncService.start();
+    });
+    return () => {
+      cancelled = true;
+      syncService.stop();
+    };
   }, []);
 
   const [fontsLoaded, fontError] = useFonts({
