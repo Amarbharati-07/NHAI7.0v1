@@ -13,6 +13,8 @@
     },
     "updates": {
       "enabled": false,
+      "checkAutomatically": "NEVER",
+      "useEmbeddedUpdate": true,
       "fallbackToCacheTimeout": 0
     },
     "splash": {

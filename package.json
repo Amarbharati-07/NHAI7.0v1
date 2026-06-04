@@ -4,9 +4,13 @@
   "license": "MIT",
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "dev": "pnpm exec concurrently -k -n api,mobile -c blue,magenta \"pnpm run dev:api\" \"pnpm run dev:mobile\"",
-    "dev:api": "node scripts/print-lan-api-url.mjs && pnpm --filter @workspace/api-server run dev",
+    "dev": "pnpm exec concurrently -n api,mobile -c blue,magenta \"pnpm run dev:api\" \"pnpm run dev:mobile\"",
+    "dev:api": "node scripts/sync-mobile-env.mjs && node scripts/print-lan-api-url.mjs && node scripts/start-api-dev.mjs",
+    "kill:api": "sh -c 'lsof -ti :${PORT:-3000} | xargs kill -9 2>/dev/null; echo Freed port ${PORT:-3000}'",
+    "db:local": "node scripts/db-local.mjs",
+    "db:setup": "node scripts/setup-local-db.mjs",
     "dev:mobile": "pnpm --filter @workspace/mobile run dev",
+    "mobile:expo": "pnpm --dir artifacts/mobile exec expo",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"

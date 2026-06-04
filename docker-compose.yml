@@ -1,0 +1,23 @@
+# Local PostgreSQL for development when Neon/cloud DB is unreachable.
+# Usage: pnpm run db:local
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nhai-postgres-dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: nhai
+      POSTGRES_PASSWORD: nhai
+      POSTGRES_DB: nhai_dev
+    volumes:
+      - nhai_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nhai -d nhai_dev"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  nhai_pg_data:

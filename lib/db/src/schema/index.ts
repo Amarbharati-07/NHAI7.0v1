@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, real, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -39,6 +39,9 @@ export const tollPlazasTable = pgTable("toll_plazas", {
   name: text("name").notNull(),
   route: text("route").default(""),
   location: text("location").default(""),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
+  radiusMeters: integer("radius_meters").default(300),
   operatorId: text("operator_id").default(""),
   operatorName: text("operator_name").default("Unassigned"),
   workerCount: integer("worker_count").default(0),
@@ -47,6 +50,18 @@ export const tollPlazasTable = pgTable("toll_plazas", {
   attendancePct: integer("attendance_pct").default(0),
   status: text("status").default("inactive"),
   lastSync: text("last_sync").default("Never"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const geofenceEventsTable = pgTable("geofence_events", {
+  id: serial("id").primaryKey(),
+  operatorId: text("operator_id").notNull(),
+  plazaId: text("plaza_id").notNull(),
+  latitude: real("latitude").notNull(),
+  longitude: real("longitude").notNull(),
+  distanceMeters: integer("distance_meters").notNull(),
+  eventTimestamp: text("event_timestamp").notNull(),
+  result: text("result").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -68,11 +83,12 @@ export const operatorsTable = pgTable("operators", {
 
 export const devicesTable = pgTable("devices", {
   id: serial("id").primaryKey(),
-  deviceId: text("device_id").notNull().unique(),
+  deviceId: text("device_id").notNull(),
   deviceName: text("device_name").default(""),
   deviceType: text("device_type").default("android"),
   deviceModel: text("device_model").default(""),
-  imei: text("imei").default(""),
+  imei: text("imei"),
+  deviceToken: text("device_token").default(""),
   operatorId: text("operator_id").default(""),
   operatorName: text("operator_name").default("Unassigned"),
   plazaName: text("plaza_name").default(""),
@@ -81,7 +97,10 @@ export const devicesTable = pgTable("devices", {
   unauthorizedAttempts: integer("unauthorized_attempts").default(0),
   allocatedAt: text("allocated_at").default(""),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => ({
+  deviceIdUnique: uniqueIndex("devices_device_id_unique").on(table.deviceId),
+  imeiUnique: uniqueIndex("devices_imei_unique").on(table.imei),
+}));
 
 export const securityEventsTable = pgTable("security_events", {
   id: serial("id").primaryKey(),
@@ -108,6 +127,7 @@ export const auditLogsTable = pgTable("audit_logs", {
 export const insertWorkerSchema = createInsertSchema(workersTable).omit({ id: true, createdAt: true });
 export const insertAttendanceSchema = createInsertSchema(attendanceTable).omit({ id: true, createdAt: true });
 export const insertTollPlazaSchema = createInsertSchema(tollPlazasTable).omit({ id: true, createdAt: true });
+export const insertGeofenceEventSchema = createInsertSchema(geofenceEventsTable).omit({ id: true, createdAt: true });
 export const insertOperatorSchema = createInsertSchema(operatorsTable).omit({ id: true, createdAt: true });
 export const insertDeviceSchema = createInsertSchema(devicesTable).omit({ id: true, createdAt: true });
 export const insertSecurityEventSchema = createInsertSchema(securityEventsTable).omit({ id: true, createdAt: true });
@@ -116,6 +136,7 @@ export const insertAuditLogSchema = createInsertSchema(auditLogsTable).omit({ id
 export type InsertWorker = z.infer<typeof insertWorkerSchema>;
 export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
 export type InsertTollPlaza = z.infer<typeof insertTollPlazaSchema>;
+export type InsertGeofenceEvent = z.infer<typeof insertGeofenceEventSchema>;
 export type InsertOperator = z.infer<typeof insertOperatorSchema>;
 export type InsertDevice = z.infer<typeof insertDeviceSchema>;
 export type InsertSecurityEvent = z.infer<typeof insertSecurityEventSchema>;
@@ -124,6 +145,7 @@ export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type DbWorker = typeof workersTable.$inferSelect;
 export type DbAttendance = typeof attendanceTable.$inferSelect;
 export type DbTollPlaza = typeof tollPlazasTable.$inferSelect;
+export type DbGeofenceEvent = typeof geofenceEventsTable.$inferSelect;
 export type DbOperator = typeof operatorsTable.$inferSelect;
 export type DbDevice = typeof devicesTable.$inferSelect;
 export type DbSecurityEvent = typeof securityEventsTable.$inferSelect;

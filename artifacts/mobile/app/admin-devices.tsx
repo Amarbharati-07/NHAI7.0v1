@@ -18,6 +18,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import { useAdminData } from "@/contexts/AdminDataContext";
+import { apiPostJson, apiPutJson, isApiConfigured, withTimeout } from "@/services/apiConfig";
+import { friendlyErrorMessage } from "@/services/userMessages";
 import {
   type DevicePlatform,
   type DeviceStatus,
@@ -28,6 +30,7 @@ import {
   getRegisteredDevices,
   getAllocations,
   registerDevice,
+  deleteRegisteredDevice,
   createAllocation,
   updateAllocationStatus,
   updateDeviceStatus,
@@ -53,6 +56,19 @@ const ALLOC_STATUS_META: Record<AllocStatus, { label: string; color: string }> =
   replaced: { label: "Replaced", color: "#D97706" },
   inactive: { label: "Inactive", color: "#607A9B" },
 };
+
+function dedupeAllocationsForUI(allocations: OperatorAllocation[]): OperatorAllocation[] {
+  const seenIds = new Set<string>();
+  const seenBusinessKeys = new Set<string>();
+  return allocations.filter((allocation) => {
+    const allocationId = String(allocation.id ?? "").trim().toUpperCase();
+    const businessKey = `${allocation.deviceId}|${allocation.operatorId}|${allocation.plazaId}|${allocation.status}`.toUpperCase();
+    if (seenIds.has(allocationId) || seenBusinessKeys.has(businessKey)) return false;
+    seenIds.add(allocationId);
+    seenBusinessKeys.add(businessKey);
+    return true;
+  });
+}
 
 /* ── Device Registry Card ── */
 function DeviceRegistryCard({
@@ -310,7 +326,7 @@ type AlFilter  = "all" | "active" | "replaced" | "blocked";
 export default function AdminDevicesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { deleteDevice, plazas, operators, refresh: refreshAdminData } = useAdminData();
+  const { deleteDevice, plazas, operators, refresh: refreshAdminData, apiError } = useAdminData();
   const botPad = Platform.OS === "web" ? 24 : insets.bottom + 20;
 
   const [mainTab,   setMainTab]   = useState<MainTab>("registry");
@@ -319,6 +335,7 @@ export default function AdminDevicesScreen() {
   const [devices,   setDevices]   = useState<RegisteredDevice[]>([]);
   const [allocs,    setAllocs]    = useState<OperatorAllocation[]>([]);
   const [loading,   setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving,    setSaving]    = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -355,12 +372,74 @@ export default function AdminDevicesScreen() {
     setTimeout(() => setSuccessMsg(""), 3500);
   };
 
+  const syncDeviceToServer = useCallback(
+    async (
+      deviceId: string,
+      payload: {
+        deviceName?: string;
+        deviceType?: DevicePlatform;
+        deviceModel?: string;
+        imei?: string;
+        deviceToken?: string;
+        operatorId?: string;
+        operatorName?: string;
+        plazaName?: string;
+        status?: string;
+        performedBy?: string;
+      },
+    ) => {
+      if (!isApiConfigured()) return;
+      await apiPutJson(`admin/devices/${encodeURIComponent(deviceId)}`, payload, 15000);
+    },
+    [],
+  );
+
+  const registerDeviceOnServer = useCallback(
+    async (payload: {
+      deviceId: string;
+      deviceName: string;
+      deviceType: DevicePlatform;
+      deviceModel: string;
+      imei: string;
+      deviceToken?: string;
+      operatorId?: string;
+      operatorName?: string;
+      plazaId?: string;
+      plazaName?: string;
+      status?: string;
+    }) => {
+      if (!isApiConfigured()) return;
+      console.info("[admin-devices] register request", {
+        url: "/api/admin/devices",
+        payload: { ...payload, performedBy: "ADMIN001" },
+      });
+      await apiPostJson("admin/devices", { ...payload, performedBy: "ADMIN001" }, 15000);
+    },
+    [],
+  );
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [d, a] = await Promise.all([getRegisteredDevices(), getAllocations()]);
+      const [d, a] = await withTimeout(
+        Promise.all([getRegisteredDevices(), getAllocations()]),
+        10000,
+        "Device data load",
+      );
       setDevices(d);
-      setAllocs(a);
+      const nextAllocations = dedupeAllocationsForUI(a);
+      setAllocs(nextAllocations);
+      console.info("[admin-devices] allocated devices list:", nextAllocations.map((allocation) => ({
+        id: allocation.id,
+        deviceId: allocation.deviceId,
+        operatorId: allocation.operatorId,
+        plazaId: allocation.plazaId,
+        status: allocation.status,
+      })));
+      setLoadError("");
+    } catch (err) {
+      console.error("[admin-devices] loadData error:", err);
+      setLoadError(friendlyErrorMessage(err, "Unable to load device data. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -375,28 +454,36 @@ export default function AdminDevicesScreen() {
 
   /* Open registration modal — tokens start empty until user explicitly opts in */
   const openRegModal = async () => {
-    const existingDevices = await getRegisteredDevices();
-    const nums = existingDevices
-      .map((d) => parseInt(d.id.replace("DEV", ""), 10))
-      .filter((n) => !isNaN(n));
-    const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-    setPreviewDevId(`DEV${String(next).padStart(3, "0")}`);
+    try {
+      const existingDevices = await getRegisteredDevices();
+      const nums = existingDevices
+        .map((d) => parseInt(d.id.replace("DEV", ""), 10))
+        .filter((n) => !isNaN(n));
+      const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+      setPreviewDevId(`DEV${String(next).padStart(3, "0")}`);
 
-    const platform = getDevicePlatform();
-    setRegPlatform(platform);
-    setRegOsVersion(getDefaultOsVersion(platform));
+      const platform = getDevicePlatform();
+      setRegPlatform(platform);
+      setRegOsVersion(getDefaultOsVersion(platform));
 
-    /* Reset everything — tokens remain empty until checkbox is checked */
-    setUseCurrentDev(false);
-    setRegToken("");
-    setRegAppToken("");
-    setTokenGenMsg("");
-    setRegName("");
-    setRegModel("");
-    setRegImei("");
-    setRegPlazaId("");
-    setShowRegModal(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      /* Reset everything — tokens remain empty until checkbox is checked */
+      setUseCurrentDev(false);
+      setRegToken("");
+      setRegAppToken("");
+      setTokenGenMsg("");
+      setRegName("");
+      setRegModel("");
+      setRegImei("");
+      setRegPlazaId("");
+      setShowRegModal(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch (err) {
+      console.error("[admin-devices] openRegModal error:", err);
+      Alert.alert(
+        "Unable to open registration",
+        friendlyErrorMessage(err, "Could not prepare the device form. Please try again."),
+      );
+    }
   };
 
   /* Regenerate tokens — only callable when checkbox is already checked */
@@ -414,9 +501,10 @@ export default function AdminDevicesScreen() {
   const handleRegisterDevice = async () => {
     if (!regName.trim() || !regModel.trim()) return;
     setSaving(true);
+    let createdLocalDevice: RegisteredDevice | null = null;
     try {
       const plaza = plazas.find((p) => p.id === regPlazaId);
-      await registerDevice({
+      createdLocalDevice = await registerDevice({
         deviceName:        regName.trim(),
         deviceModel:       regModel.trim(),
         imeiNumber:        regPlatform === "web" ? "N/A" : regImei.trim() || "N/A",
@@ -427,13 +515,34 @@ export default function AdminDevicesScreen() {
         assignedPlazaId:   plaza?.id,
         assignedPlazaName: plaza?.name,
       });
+      await registerDeviceOnServer({
+        deviceId: createdLocalDevice.id,
+        deviceName: createdLocalDevice.deviceName,
+        deviceType: createdLocalDevice.platform,
+        deviceModel: createdLocalDevice.deviceModel,
+        imei: createdLocalDevice.imeiNumber,
+        deviceToken: createdLocalDevice.deviceToken,
+        operatorId: plaza?.operatorId ?? "",
+        operatorName: plaza?.operatorName ?? "Unassigned",
+        plazaId: plaza?.id ?? "",
+        plazaName: createdLocalDevice.assignedPlazaName,
+        status: "pending",
+      });
       setShowRegModal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await loadData();
       await refreshAdminData();
       showSuccess(`Device "${regName}" registered as ${previewDevId}.`);
-    } catch {
-      /* silent – UI handles empty state */
+    } catch (err) {
+      console.error("[admin-devices] register error:", err);
+      if (createdLocalDevice) {
+        try {
+          await deleteRegisteredDevice(createdLocalDevice.id);
+        } catch (rollbackErr) {
+          console.warn("[admin-devices] rollback local device failed:", rollbackErr);
+        }
+      }
+      Alert.alert("Register failed", friendlyErrorMessage(err, "Unable to register this device. Please try again."));
     } finally {
       setSaving(false);
     }
@@ -448,6 +557,14 @@ export default function AdminDevicesScreen() {
       const operator = operators.find((o) => o.id === allocOpId);
       const plaza    = plazas.find((p) => p.id === operator?.plazaId);
       if (!device || !operator) throw new Error("Invalid selection");
+      await syncDeviceToServer(device.id, {
+        operatorId: operator.id,
+        operatorName: operator.name,
+        plazaName: plaza?.name ?? operator.plazaName,
+        status: "active",
+        deviceToken: device.deviceToken,
+        performedBy: "ADMIN001",
+      });
       await createAllocation({
         operatorId:   operator.id,
         operatorName: operator.name,
@@ -469,7 +586,10 @@ export default function AdminDevicesScreen() {
       await loadData();
       await refreshAdminData();
       showSuccess(`${device.id} allocated to ${operator.name}.`);
-    } catch { /* noop */ } finally {
+    } catch (err) {
+      console.error("[admin-devices] allocate error:", err);
+      Alert.alert("Allocate failed", friendlyErrorMessage(err, "Unable to allocate this device. Please try again."));
+    } finally {
       setSaving(false);
     }
   };
@@ -509,10 +629,7 @@ export default function AdminDevicesScreen() {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               } catch (e) {
                 console.error("[admin-devices] delete error:", e);
-                Alert.alert(
-                  "Delete failed",
-                  e instanceof Error ? e.message : "Could not delete device.",
-                );
+                Alert.alert("Delete failed", friendlyErrorMessage(e, "Unable to delete this device. Please try again."));
               } finally {
                 setSaving(false);
               }
@@ -545,13 +662,25 @@ export default function AdminDevicesScreen() {
     try {
       if (actionModal.type === "block_device") {
         await updateDeviceStatus(actionModal.id, "blocked");
+        await syncDeviceToServer(actionModal.id, {
+          status: "blocked",
+          performedBy: "ADMIN001",
+        });
         showSuccess("Device blocked successfully.");
       } else if (actionModal.type === "deactivate") {
         if (actionModal.extra === "unblock") {
           await updateDeviceStatus(actionModal.id, "available");
+          await syncDeviceToServer(actionModal.id, {
+            status: "pending",
+            performedBy: "ADMIN001",
+          });
           showSuccess("Device unblocked — now available.");
         } else {
           await updateDeviceStatus(actionModal.id, "inactive");
+          await syncDeviceToServer(actionModal.id, {
+            status: "inactive",
+            performedBy: "ADMIN001",
+          });
           showSuccess("Device deactivated.");
         }
       } else if (actionModal.type === "block_alloc") {
@@ -577,6 +706,14 @@ export default function AdminDevicesScreen() {
           allocatedAt:  new Date().toISOString().split("T")[0],
           allocatedBy:  "ADMIN001",
         });
+        await syncDeviceToServer(newDev.id, {
+          operatorId: oldAlloc.operatorId,
+          operatorName: oldAlloc.operatorName,
+          plazaName: oldAlloc.plazaName,
+          status: "active",
+          deviceToken: newDev.deviceToken,
+          performedBy: "ADMIN001",
+        });
         showSuccess(`Device replaced with ${newDev.id}.`);
       } else if (actionModal.type === "reassign") {
         if (!reassignOpId) { setSaving(false); return; }
@@ -600,20 +737,31 @@ export default function AdminDevicesScreen() {
           allocatedAt:  new Date().toISOString().split("T")[0],
           allocatedBy:  "ADMIN001",
         });
+        await syncDeviceToServer(oldAlloc.deviceId, {
+          operatorId: newOp.id,
+          operatorName: newOp.name,
+          plazaName: newPlaza?.name ?? newOp.plazaName,
+          status: "active",
+          deviceToken: oldAlloc.deviceToken,
+          performedBy: "ADMIN001",
+        });
         showSuccess(`Device reassigned to ${newOp.name}.`);
       }
       setActionModal(null);
       setActionReason(""); setReplaceDevId(""); setReassignOpId("");
       await loadData();
       await refreshAdminData();
-    } catch { /* noop */ } finally {
+    } catch (err) {
+      console.error("[admin-devices] action submit error:", err);
+      Alert.alert("Update failed", friendlyErrorMessage(err, "Unable to complete this action. Please try again."));
+    } finally {
       setSaving(false);
     }
   };
 
   /* ── Derived data ── */
   const filteredDevices = devices.filter((d) => regFilter === "all" ? true : d.status === regFilter);
-  const filteredAllocs  = allocs.filter((a) => alFilter === "all" ? true : a.status === alFilter);
+  const filteredAllocs  = dedupeAllocationsForUI(allocs.filter((a) => alFilter === "all" ? true : a.status === alFilter));
   const availableDevs   = devices.filter((d) => d.status === "available");
   const activeOperators = operators.filter((o) => o.status === "active");
 
@@ -640,6 +788,33 @@ export default function AdminDevicesScreen() {
           <View style={[st.successBanner, { backgroundColor: colors.success + "22", borderColor: colors.success + "55" }]}>
             <Ionicons name="checkmark-circle" size={15} color={colors.success} />
             <Text style={[st.successText, { color: colors.success }]}>{successMsg}</Text>
+          </View>
+        )}
+
+        {(loadError || apiError) && (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginTop: 8,
+              padding: 12,
+              borderRadius: 10,
+              backgroundColor: colors.destructive + "14",
+              borderWidth: 1,
+              borderColor: colors.destructive + "44",
+            }}
+          >
+            <Text style={{ color: colors.destructive, fontSize: 13, fontWeight: "600" }}>
+              Unable to load or update device data
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>
+              {loadError || apiError}
+            </Text>
+            <TouchableOpacity
+              style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.destructive }}
+              onPress={() => { void loadData(); void refreshAdminData(); }}
+            >
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>Retry</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -670,7 +845,7 @@ export default function AdminDevicesScreen() {
             ))}
           </View>
 
-          {loading && devices.length === 0 ? (
+          {loading && devices.length === 0 && !loadError && !apiError ? (
             <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
           ) : mainTab === "registry" ? (
             <>
@@ -739,8 +914,8 @@ export default function AdminDevicesScreen() {
                   <Text style={[st.emptyText, { color: colors.textMuted }]}>No allocations found</Text>
                 </View>
               ) : (
-                filteredAllocs.map((a) => (
-                  <AllocationCard key={a.id} alloc={a} devices={devices} onAction={handleAllocAction} />
+                filteredAllocs.map((a, index) => (
+                  <AllocationCard key={`${a.deviceId}-${a.operatorId}-${a.plazaId}-${a.status}-${index}`} alloc={a} devices={devices} onAction={handleAllocAction} />
                 ))
               )}
             </>
@@ -1241,7 +1416,7 @@ export default function AdminDevicesScreen() {
                 </View>
               ) : (
                 [...(historyDevice?.allocationHistory ?? [])].reverse().map((entry: AllocationHistoryEntry, i) => (
-                  <View key={entry.allocationId} style={[st.histEntry, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
+                  <View key={`${entry.allocationId}-${i}`} style={[st.histEntry, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
                     <View style={st.histEntryHeader}>
                       <View style={[st.histBullet, { backgroundColor: entry.endedAt ? colors.textMuted + "40" : colors.success + "40" }]}>
                         <View style={[st.histBulletInner, { backgroundColor: entry.endedAt ? colors.textMuted : colors.success }]} />

@@ -25,6 +25,7 @@ import {
   captureImage,
 } from "@/services/FaceCaptureService";
 import { useColors } from "@/hooks/useColors";
+import { friendlyErrorMessage } from "@/services/userMessages";
 
 export default function CameraCaptureScreen() {
   const colors = useColors();
@@ -71,7 +72,7 @@ export default function CameraCaptureScreen() {
         setError("Camera was cancelled or permission denied.");
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Camera error");
+      setError(friendlyErrorMessage(e, "Unable to capture the photo. Please try again."));
     }
     setCapturing(false);
   };

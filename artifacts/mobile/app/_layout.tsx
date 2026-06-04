@@ -14,6 +14,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import { ActivityIndicator, LogBox, View } from "react-native";
 import React, { useEffect } from "react";
 import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -26,8 +27,9 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { DrawerProvider } from "@/contexts/DrawerContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { syncService } from "@/services/SyncService";
+import { bootstrapExpoUpdates } from "@/services/expoUpdatesBootstrap";
 
-SplashScreen.preventAutoHideAsync();
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const queryClient = new QueryClient();
 
@@ -38,10 +40,59 @@ const SQLITE_ERROR_PATTERNS = [
   "sqlite",
 ];
 
+const REMOTE_UPDATE_ERROR_PATTERNS = [
+  "Failed to download remote update",
+  "Failed to fetch update",
+  "remote update",
+  "expo-updates",
+];
+
+function isRemoteUpdateError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error ?? "");
+  return REMOTE_UPDATE_ERROR_PATTERNS.some((pattern) =>
+    message.toLowerCase().includes(pattern.toLowerCase()),
+  );
+}
+
+if (Platform.OS !== "web") {
+  LogBox.ignoreLogs([
+    "Failed to download remote update",
+    "Failed to fetch update",
+  ]);
+
+  const globalErrorUtils = globalThis as typeof globalThis & {
+    ErrorUtils?: {
+      getGlobalHandler?: () => ((error: Error, isFatal?: boolean) => void) | undefined;
+      setGlobalHandler: (handler: (error: Error, isFatal?: boolean) => void) => void;
+    };
+  };
+
+  const previousHandler = globalErrorUtils.ErrorUtils?.getGlobalHandler?.();
+  globalErrorUtils.ErrorUtils?.setGlobalHandler((error, isFatal) => {
+    if (isRemoteUpdateError(error)) {
+      console.warn("[RootLayout] remote update error ignored", {
+        message: error instanceof Error ? error.message : String(error),
+        isFatal: Boolean(isFatal),
+      });
+      return;
+    }
+    previousHandler?.(error, isFatal);
+  });
+}
+
 if (Platform.OS === "web" && typeof window !== "undefined") {
   window.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
     const msg: string = event.reason?.message ?? String(event.reason ?? "");
     if (SQLITE_ERROR_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()))) {
+      event.preventDefault();
+    }
+    if (REMOTE_UPDATE_ERROR_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()))) {
+      console.warn("[RootLayout] remote update rejection ignored", { message: msg });
       event.preventDefault();
     }
   });
@@ -55,9 +106,11 @@ export default function RootLayout() {
         const { initDatabase } = await import("@/services/database");
         await initDatabase();
       }
+      void bootstrapExpoUpdates();
       if (!cancelled) syncService.start();
     })().catch((err) => {
       console.error("[RootLayout] database init failed:", err);
+      void bootstrapExpoUpdates();
       if (!cancelled) syncService.start();
     });
     return () => {
@@ -78,12 +131,25 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
+    const hideFallback = setTimeout(() => {
+      void SplashScreen.hideAsync().catch(() => {});
+    }, 2500);
+
     if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
+      clearTimeout(hideFallback);
+      void SplashScreen.hideAsync().catch(() => {});
     }
+
+    return () => clearTimeout(hideFallback);
   }, [fontsLoaded, fontError]);
 
-  if (!fontsLoaded && !fontError) return null;
+  if (!fontsLoaded && !fontError) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#050B1F" }}>
+        <ActivityIndicator size="large" color="#7EC8E3" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaProvider>

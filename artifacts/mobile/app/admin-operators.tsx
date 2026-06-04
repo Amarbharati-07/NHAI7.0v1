@@ -22,6 +22,8 @@ import type { AdminOperator, TollPlaza } from "@/services/adminData";
 import * as adminStore from "@/services/adminStore";
 import { filterPlazasBySearch, plazaStatusLabel, sortPlazasByName } from "@/services/plazaUtils";
 import { useColors } from "@/hooks/useColors";
+import { withTimeout } from "@/services/apiConfig";
+import { friendlyErrorMessage } from "@/services/userMessages";
 
 type OpFilter = "all" | "active" | "suspended" | "pending";
 
@@ -161,11 +163,15 @@ export default function AdminOperatorsScreen() {
   const loadPlazasForModal = useCallback(async () => {
     setPlazasLoading(true);
     try {
-      const list = await adminStore.getTollPlazas();
+      const list = await withTimeout(adminStore.getTollPlazas(), 10000, "Load toll plazas");
       setModalPlazas(list);
     } catch (err) {
       console.error("[admin-operators] load plazas error:", err);
       setModalPlazas(plazas);
+      Alert.alert(
+        "Unable to load toll plazas",
+        friendlyErrorMessage(err, "Using the currently cached plaza list."),
+      );
     } finally {
       setPlazasLoading(false);
     }
@@ -212,6 +218,7 @@ export default function AdminOperatorsScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (e) {
         console.error("[admin-operators] activate error:", e);
+        Alert.alert("Unable to update operator", friendlyErrorMessage(e, "Unable to activate this operator. Please try again."));
       } finally {
         setSaving(false);
       }
@@ -239,10 +246,7 @@ export default function AdminOperatorsScreen() {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               } catch (e) {
                 console.error("[admin-operators] delete error:", e);
-                Alert.alert(
-                  "Delete failed",
-                  e instanceof Error ? e.message : "Could not delete operator.",
-                );
+                Alert.alert("Delete failed", friendlyErrorMessage(e, "Unable to delete this operator. Please try again."));
               } finally {
                 setSaving(false);
               }
@@ -263,7 +267,7 @@ export default function AdminOperatorsScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     } catch (e) {
       console.error("[admin-operators] suspend error:", e);
-      Alert.alert("Suspend failed", e instanceof Error ? e.message : "Could not update operator.");
+      Alert.alert("Suspend failed", friendlyErrorMessage(e, "Unable to update this operator. Please try again."));
     } finally {
       setSaving(false);
     }
@@ -281,10 +285,7 @@ export default function AdminOperatorsScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.error("[admin-operators] reset password error:", e);
-      Alert.alert(
-        "Password reset failed",
-        e instanceof Error ? e.message : "Could not save the new password. Check API connection.",
-      );
+      Alert.alert("Password reset failed", friendlyErrorMessage(e, "Unable to save the new password. Please try again."));
     } finally {
       setSaving(false);
     }
@@ -324,10 +325,7 @@ export default function AdminOperatorsScreen() {
       showSuccess(`Operator ${form.name} created. Assign a device next.`);
     } catch (e) {
       console.error("[admin-operators] create error:", e);
-      Alert.alert(
-        "Create failed",
-        e instanceof Error ? e.message : "Could not create operator.",
-      );
+      Alert.alert("Create failed", friendlyErrorMessage(e, "Unable to create this operator. Please try again."));
     } finally {
       setSaving(false);
     }
@@ -342,9 +340,20 @@ export default function AdminOperatorsScreen() {
     }
   };
 
-  const deviceInfoAllocs = deviceTarget
-    ? allocations.filter((a) => a.operatorId === deviceTarget.id && a.status === "active")
-    : [];
+  const deviceInfoAllocs = useMemo(() => {
+    if (!deviceTarget) return [];
+    const seenIds = new Set<string>();
+    const seenBusinessKeys = new Set<string>();
+    return allocations.filter((allocation) => {
+      if (allocation.operatorId !== deviceTarget.id || allocation.status !== "active") return false;
+      const allocationId = String(allocation.id ?? "").trim().toUpperCase();
+      const businessKey = `${allocation.deviceId}|${allocation.operatorId}|${allocation.plazaId}|${allocation.status}`.toUpperCase();
+      if (seenIds.has(allocationId) || seenBusinessKeys.has(businessKey)) return false;
+      seenIds.add(allocationId);
+      seenBusinessKeys.add(businessKey);
+      return true;
+    });
+  }, [allocations, deviceTarget]);
 
   return (
     <DrawerOverlay>
@@ -371,13 +380,28 @@ export default function AdminOperatorsScreen() {
             }}
           >
             <Text style={{ color: colors.destructive, fontSize: 13, fontWeight: "600" }}>
-              API offline — changes will not be saved
+              Offline mode active - changes will sync when connection returns.
+            </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>{apiError}</Text>
+            </View>
+        ) : null}
+
+        {apiError && operators.length === 0 ? (
+          <View style={{ marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 10, backgroundColor: colors.warning + "12", borderWidth: 1, borderColor: colors.warning + "33" }}>
+            <Text style={{ color: colors.warning, fontSize: 13, fontWeight: "600" }}>
+              Loading paused until the API responds
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }}>{apiError}</Text>
+            <TouchableOpacity
+              style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.warning }}
+              onPress={() => { void refresh(); }}
+            >
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>Retry</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
 
-        {loading && operators.length === 0 && (
+        {loading && operators.length === 0 && !apiError && (
           <View style={{ padding: 12, alignItems: "center" }}>
             <ActivityIndicator size="small" color={colors.primary} />
           </View>
@@ -561,11 +585,11 @@ export default function AdminOperatorsScreen() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                deviceInfoAllocs.map((alloc) => {
+                deviceInfoAllocs.map((alloc, index) => {
                   const dev = devices.find((d) => d.id === alloc.deviceId);
                   const statusColor = alloc.status === "active" ? colors.success : alloc.status === "blocked" ? colors.destructive : colors.warning;
                   return (
-                    <View key={alloc.id} style={[st.deviceCard, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
+                    <View key={`${alloc.deviceId}-${alloc.operatorId}-${alloc.plazaId}-${alloc.status}-${index}`} style={[st.deviceCard, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: colors.radius }]}>
                       <View style={st.deviceCardHeader}>
                         <View style={[st.deviceIconWrap, { backgroundColor: statusColor + "22" }]}>
                           <Ionicons name={alloc.platform === "ios" ? "logo-apple" : alloc.platform === "web" ? "globe-outline" : "logo-android"} size={20} color={statusColor} />

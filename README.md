@@ -11,6 +11,20 @@ pnpm --filter @workspace/mockup-sandbox run dev # UI preview — port 5000
 pnpm --filter @workspace/mobile run dev         # Expo dev server + QR (port 8081)
 pnpm --filter @workspace/mobile run dev:web     # Browser only (no QR)
 pnpm --filter @workspace/mobile run dev:tunnel  # QR via tunnel (different Wi‑Fi)
+pnpm --filter @workspace/mobile run dev:usb     # Android USB (adb reverse + localhost)
+pnpm run mobile:expo -- config --type public     # Expo CLI from repo root
+```
+
+### Expo Go: “Failed to download remote update”
+
+This usually means the phone cannot reach Metro on your Mac (not an EAS OTA failure). Try, in order:
+
+1. Same Wi‑Fi on Mac and phone (avoid guest / “client isolation” networks).
+2. `pnpm --filter @workspace/mobile run dev:tunnel` and scan the new QR code.
+3. Android over USB: enable USB debugging, then `pnpm --filter @workspace/mobile run dev:usb`.
+4. On macOS, allow **Node** in System Settings → Network → Firewall if prompted.
+
+Use **pnpm**, not npm, for workspace commands (`pnpm --filter @workspace/mobile run dev`).
 ```
 
 ```bash
@@ -26,7 +40,24 @@ Copy `artifacts/api-server/.env.example` to `artifacts/api-server/.env` and set:
 - `PORT` — optional (default `3000`)
 - `ADMIN_API_KEY` — optional; when set, admin routes require `Authorization: Bearer <key>`
 
-Mobile: set `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_DOMAIN` as needed.
+Mobile: `pnpm run dev` / `dev:mobile` auto-writes `artifacts/mobile/.env` with your Mac’s LAN IP. Start the API on the same machine (`pnpm run dev:api`). If you see **`EADDRINUSE` port 3000**, the API is already running — use `pnpm run dev:mobile` only, or free the port with `pnpm run kill:api` then start again. If login shows **Network request failed**, run `curl http://<your-lan-ip>:3000/api/health` on the Mac; it must return `{"status":"ok"}` before the phone can log in.
+
+If **add plaza** or admin lists show **Aborted** / timeout but health is OK, PostgreSQL is not reachable:
+
+```bash
+curl -s http://127.0.0.1:3000/api/health/ready   # must be {"status":"ok","database":"ok"}
+```
+
+**Local Postgres (fastest fix):**
+
+```bash
+pnpm run db:local
+# Set DATABASE_URL=postgresql://nhai:nhai@127.0.0.1:5432/nhai_dev in artifacts/api-server/.env
+pnpm --filter @workspace/db run push
+pnpm run kill:api && pnpm run dev:api
+```
+
+Or fix your cloud `DATABASE_URL` in `artifacts/api-server/.env`, then restart the API.
 
 ## Stack
 

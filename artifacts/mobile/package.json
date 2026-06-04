@@ -4,9 +4,10 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
-    "dev": "pnpm exec expo start --port 8081",
-    "dev:web": "pnpm exec expo start --web --port 8081",
+    "dev": "node ../../scripts/sync-mobile-env.mjs && node ../../scripts/print-lan-expo-url.mjs && pnpm exec expo start --port 8081 --lan",
+    "dev:web": "node ../../scripts/start-mobile-web.mjs",
     "dev:tunnel": "pnpm exec expo start --tunnel --port 8081",
+    "dev:usb": "adb reverse tcp:8081 tcp:8081 && pnpm exec expo start --localhost --port 8081",
     "build": "pnpm exec expo export --platform web",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"

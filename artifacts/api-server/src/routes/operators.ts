@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { operatorsTable, workersTable, devicesTable } from "@workspace/db/schema";
+import { operatorsTable, workersTable, devicesTable, tollPlazasTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 
 const router = Router();
@@ -9,6 +9,7 @@ const router = Router();
 router.get("/operators/:userId/bootstrap", async (req, res) => {
   try {
     const userId = String(req.params.userId ?? "").toUpperCase();
+    const requestedDeviceToken = String(req.query.deviceToken ?? "").trim();
     if (!userId) {
       return void res.status(400).json({ error: "userId required" });
     }
@@ -38,16 +39,61 @@ router.get("/operators/:userId/bootstrap", async (req, res) => {
           .from(workersTable)
           .where(eq(workersTable.operatorId, userId));
 
+    // Equivalent: SELECT * FROM devices WHERE operator_id = $userId AND status = 'active'
     const deviceRows = await db
       .select()
       .from(devicesTable)
-      .where(eq(devicesTable.operatorId, userId));
+      .where(
+        and(
+          eq(devicesTable.operatorId, userId),
+          eq(devicesTable.status, "active"),
+        ),
+      );
+
+    console.info("[operators/bootstrap] device query", {
+      sql: "SELECT * FROM devices WHERE operator_id = ? AND status = 'active'",
+      operatorId: userId,
+      rowCount: deviceRows.length,
+      deviceIds: deviceRows.map((d) => d.deviceId),
+    });
 
     const activeDevice =
-      deviceRows.find((d) => d.status === "active") ??
-      deviceRows.find((d) => d.status === "pending") ??
+      (requestedDeviceToken
+        ? deviceRows.find(
+            (d) =>
+              String((d as { deviceToken?: string }).deviceToken ?? "").trim() ===
+              requestedDeviceToken,
+          )
+        : null) ??
       deviceRows[0] ??
       null;
+    const [plaza] = operator.plazaId
+      ? await db
+          .select({
+            plazaId: tollPlazasTable.plazaId,
+            latitude: tollPlazasTable.latitude,
+            longitude: tollPlazasTable.longitude,
+            radiusMeters: tollPlazasTable.radiusMeters,
+          })
+          .from(tollPlazasTable)
+          .where(eq(tollPlazasTable.plazaId, operator.plazaId))
+          .limit(1)
+      : [null];
+
+    console.info("[operators/bootstrap]", {
+      userId,
+      requestedDeviceToken: requestedDeviceToken.slice(0, 12),
+      deviceRows: deviceRows.length,
+      selectedDeviceId: activeDevice?.deviceId ?? "",
+      selectedDeviceToken: String(
+        (activeDevice as { deviceToken?: string })?.deviceToken ?? "",
+      ).slice(0, 12),
+      plazaId: operator.plazaId ?? "",
+      plazaName: operator.plazaName ?? "",
+      plazaLatitude: plaza?.latitude ?? null,
+      plazaLongitude: plaza?.longitude ?? null,
+      plazaRadiusMeters: plaza?.radiusMeters ?? null,
+    });
 
     res.json({
       operator: {
@@ -57,7 +103,11 @@ router.get("/operators/:userId/bootstrap", async (req, res) => {
         role: "operator" as const,
         plazaId: operator.plazaId ?? "",
         plazaName: operator.plazaName ?? "Unassigned",
+        plazaLatitude: plaza?.latitude ?? null,
+        plazaLongitude: plaza?.longitude ?? null,
+        plazaRadiusMeters: plaza?.radiusMeters ?? null,
         status: operator.status ?? "active",
+        loginCount: operator.loginCount ?? 0,
       },
       workers: workerRows.map((w) => ({
         workerId: w.workerId,
@@ -78,6 +128,7 @@ router.get("/operators/:userId/bootstrap", async (req, res) => {
             deviceName: activeDevice.deviceName ?? "",
             deviceModel: activeDevice.deviceModel ?? "",
             deviceType: activeDevice.deviceType ?? "android",
+            deviceToken: (activeDevice as any).deviceToken ?? "",
             plazaName: activeDevice.plazaName ?? "",
             status: activeDevice.status ?? "active",
           }

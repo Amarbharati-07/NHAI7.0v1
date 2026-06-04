@@ -16,10 +16,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
+import GeofenceGate from "@/components/GeofenceGate";
+import { useAuth } from "@/contexts/AuthContext";
 import { getSyncStats } from "@/services/database";
 import { syncService, SyncState } from "@/services/SyncService";
 import { fetchAwsStatus, type AwsStatus } from "@/services/AwsSyncService";
 import { useColors } from "@/hooks/useColors";
+import { friendlyConnectionMessage, friendlyErrorMessage } from "@/services/userMessages";
 
 type PipelineStep = "collect" | "upload-api" | "upload-s3" | "purge";
 type StepStatus = "waiting" | "active" | "done" | "failed" | "skipped";
@@ -80,6 +83,7 @@ function useSpinAnim() {
 export default function SyncCenterScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { user, refreshDeviceAuth } = useAuth();
   const [syncState, setSyncState] = useState<SyncState>(syncService.getState());
   const [awsStatus, setAwsStatus] = useState<AwsStatus | null>(null);
   const [steps, setSteps] = useState<StepState>(IDLE_STEPS);
@@ -89,14 +93,22 @@ export default function SyncCenterScreen() {
   const unsubRef = useRef<(() => void) | null>(null);
 
   const loadStats = useCallback(async () => {
-    const stats = await getSyncStats();
-    setSyncStats(stats);
+    try {
+      const stats = await getSyncStats();
+      setSyncStats(stats);
+    } catch (err) {
+      console.warn("[sync-center] loadStats failed:", err);
+    }
   }, []);
 
   const checkAws = useCallback(async () => {
     if (syncState.isOnline) {
+      try {
       const status = await fetchAwsStatus();
       setAwsStatus(status);
+      } catch (err) {
+        console.warn("[sync-center] checkAws failed:", err);
+      }
     }
   }, [syncState.isOnline]);
 
@@ -115,6 +127,12 @@ export default function SyncCenterScreen() {
     return () => { unsubRef.current?.(); };
   }, [loadStats, checkAws]);
 
+  useEffect(() => {
+    if (user?.role === "operator") {
+      void refreshDeviceAuth();
+    }
+  }, [refreshDeviceAuth, user?.role]);
+
   const runSyncWithSteps = useCallback(async () => {
     if (!syncState.isOnline) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -128,56 +146,73 @@ export default function SyncCenterScreen() {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-    const stats = await getSyncStats();
-    if (stats.pending === 0) {
-      Alert.alert("Nothing to Sync", "All records are already synced and purged.");
-      return;
-    }
+    try {
+      const refreshed = await refreshDeviceAuth();
+      const current = refreshed ?? user;
+      if (current?.role === "operator" && current.geofenceAllowed === false) {
+        Alert.alert(
+          "Outside Authorized Toll Plaza",
+          "You are outside the authorized toll plaza location. Attendance operations are not allowed.",
+        );
+        return;
+      }
 
-    setSteps({ collect: "active", "upload-api": "waiting", "upload-s3": "waiting", purge: "waiting" });
-    spinAnim.start();
+      const stats = await getSyncStats();
+      if (stats.pending === 0) {
+        Alert.alert("Nothing to Sync", "All records are already synced and purged.");
+        return;
+      }
 
-    await new Promise((r) => setTimeout(r, 600));
-    setSteps({ collect: "done", "upload-api": "active", "upload-s3": "waiting", purge: "waiting" });
+      setSteps({ collect: "active", "upload-api": "waiting", "upload-s3": "waiting", purge: "waiting" });
+      spinAnim.start();
 
-    const result = await syncService.sync();
+      await new Promise((r) => setTimeout(r, 600));
+      setSteps({ collect: "done", "upload-api": "active", "upload-s3": "waiting", purge: "waiting" });
 
-    if (result.errors > 0 || result.synced === 0) {
-      spinAnim.stop();
+      const result = await syncService.sync();
+
+      if (result.errors > 0 || result.synced === 0) {
+        setSteps({ collect: "done", "upload-api": "failed", "upload-s3": "skipped", purge: "skipped" });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert("Sync Failed", friendlyErrorMessage(syncState.lastError, friendlyConnectionMessage()));
+        return;
+      }
+
+      setSteps({ collect: "done", "upload-api": "done", "upload-s3": "active", "purge": "waiting" });
+      await new Promise((r) => setTimeout(r, 500));
+
+      const s3Done = result.awsUploaded;
+      setSteps({
+        collect: "done",
+        "upload-api": "done",
+        "upload-s3": s3Done ? "done" : "skipped",
+        purge: "active",
+      });
+      await new Promise((r) => setTimeout(r, 700));
+
+      setSteps({
+        collect: "done",
+        "upload-api": "done",
+        "upload-s3": s3Done ? "done" : "skipped",
+        purge: "done",
+      });
+
+      setLastResult({ synced: result.synced, purged: result.purgedAttendance, s3Key: result.s3Key });
+      await loadStats();
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      await new Promise((r) => setTimeout(r, 3000));
+      setSteps(IDLE_STEPS);
+    } catch (err) {
+      console.warn("[sync-center] sync failed:", err);
       setSteps({ collect: "done", "upload-api": "failed", "upload-s3": "skipped", purge: "skipped" });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert("Sync Failed", syncState.lastError ?? "Could not reach the server. Try again.");
-      return;
+      Alert.alert("Sync Failed", friendlyErrorMessage(err, friendlyConnectionMessage()));
+    } finally {
+      spinAnim.stop();
     }
-
-    setSteps({ collect: "done", "upload-api": "done", "upload-s3": "active", "purge": "waiting" });
-    await new Promise((r) => setTimeout(r, 500));
-
-    const s3Done = result.awsUploaded;
-    setSteps({
-      collect: "done",
-      "upload-api": "done",
-      "upload-s3": s3Done ? "done" : "skipped",
-      purge: "active",
-    });
-    await new Promise((r) => setTimeout(r, 700));
-
-    setSteps({
-      collect: "done",
-      "upload-api": "done",
-      "upload-s3": s3Done ? "done" : "skipped",
-      purge: "done",
-    });
-    spinAnim.stop();
-
-    setLastResult({ synced: result.synced, purged: result.purgedAttendance, s3Key: result.s3Key });
-    await loadStats();
-
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-    await new Promise((r) => setTimeout(r, 3000));
-    setSteps(IDLE_STEPS);
-  }, [syncState, spinAnim, loadStats]);
+  }, [syncState, spinAnim, loadStats, refreshDeviceAuth, user]);
 
   const isBusy = syncState.isSyncing || syncState.isPurging;
   const anyActive = Object.values(steps).some((s) => s === "active");
@@ -225,6 +260,16 @@ export default function SyncCenterScreen() {
       <View style={[styles.root, { backgroundColor: colors.background }]}>
         <AppHeader title="Sync & Purge Center" showBack onBack={() => router.back()} />
 
+        {user?.role === "operator" && user.geofenceAllowed === false ? (
+          <GeofenceGate
+            plazaName={user.plazaName}
+            distanceMeters={user.geofenceDistanceMeters ?? null}
+            radiusMeters={user.plazaRadiusMeters ?? null}
+            message={user.geofenceMessage}
+            onRetry={() => { void refreshDeviceAuth(); }}
+            onBack={() => router.back()}
+          />
+        ) : (
         <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
           showsVerticalScrollIndicator={false}
@@ -291,7 +336,7 @@ export default function SyncCenterScreen() {
               </View>
             ) : (
               <Text style={[styles.awsMeta, { color: colors.textMuted, marginTop: 4 }]}>
-                Set AWS_REGION, AWS_BUCKET_NAME, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY on the server to enable direct S3 archival.
+                Cloud archival is not configured yet. Records will still sync to the main server normally.
               </Text>
             )}
           </View>
@@ -341,7 +386,7 @@ export default function SyncCenterScreen() {
             <View style={[styles.errorBanner, { backgroundColor: "#fee2e2" }]}>
               <MaterialIcons name="warning" size={16} color="#dc2626" />
               <Text style={[styles.errorText, { color: "#dc2626" }]} numberOfLines={2}>
-                {syncState.lastError}
+                {friendlyErrorMessage(syncState.lastError, friendlyConnectionMessage())}
               </Text>
             </View>
           )}
@@ -444,6 +489,7 @@ export default function SyncCenterScreen() {
             </Text>
           </View>
         </ScrollView>
+        )}
       </View>
     </DrawerOverlay>
   );

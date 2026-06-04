@@ -155,14 +155,23 @@ export default function WorkerDirectoryScreen() {
         if (statusFilter !== "all") data = data.filter((w) => (w.status ?? "active") === statusFilter);
       }
       setWorkers(data);
-    } catch {}
-    setLoading(false);
-    setRefreshing(false);
+    } catch (err) {
+      console.warn("[worker-directory] load failed:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [user?.plazaId, statusFilter]);
 
-  useFocusEffect(useCallback(() => { setLoading(true); load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    setLoading(true);
+    void load();
+  }, [load]));
 
-  const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    void load();
+  }, [load]);
 
   const filtered = workers.filter((w) => {
     if (!search) return true;

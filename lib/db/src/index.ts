@@ -11,9 +11,28 @@ function missingDatabaseError(): Error {
   );
 }
 
-const databaseUrl = process.env.DATABASE_URL;
+/** channel_binding=require can hang some Node/pg builds against Neon. */
+function sanitizeDatabaseUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("channel_binding");
+    return parsed.toString();
+  } catch {
+    return url.replace(/([?&])channel_binding=require(&|$)/g, "$1").replace(/[?&]$/, "");
+  }
+}
 
-export const pool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
+const databaseUrl = process.env.DATABASE_URL ? sanitizeDatabaseUrl(process.env.DATABASE_URL) : undefined;
+
+export const pool = databaseUrl
+  ? new Pool({
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 8_000,
+      idleTimeoutMillis: 30_000,
+      max: 10,
+      keepAlive: true,
+    })
+  : null;
 export const db = databaseUrl
   ? drizzle(pool as pg.Pool, { schema })
   : new Proxy(

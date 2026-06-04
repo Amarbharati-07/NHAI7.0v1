@@ -5,7 +5,9 @@ import { initDatabase, upsertWorkersFromServer, type WorkerStatus } from "./data
 import {
   ensureOperatorAllocationFromBootstrap,
   getOrCreateDeviceToken,
+  verifyDevice,
 } from "./deviceService";
+import { syncPlazaGeofenceFromUser } from "./locationService";
 import { updateOfflineProfile } from "./offlineAuthService";
 
 export interface BootstrapWorker {
@@ -27,6 +29,7 @@ export interface BootstrapDevice {
   deviceName: string;
   deviceModel: string;
   deviceType: string;
+  deviceToken?: string;
   plazaName: string;
   status: string;
 }
@@ -47,10 +50,18 @@ export async function bootstrapOperatorOfflineData(
   if (!isApiConfigured() || Platform.OS === "web") return null;
 
   try {
+    console.info("[offlineBootstrap] refresh start", { userId: userId.toUpperCase() });
     const localDeviceToken = await getOrCreateDeviceToken();
     const data = await apiGetJson<BootstrapResponse>(
       `operators/${encodeURIComponent(userId.toUpperCase())}/bootstrap?deviceToken=${encodeURIComponent(localDeviceToken)}`,
     );
+    console.info("BOOTSTRAP_RESPONSE", {
+      userId: data.operator.userId,
+      plazaId: data.operator.plazaId ?? "",
+      plazaName: data.operator.plazaName ?? "",
+      hasDevice: Boolean(data.device),
+      workerCount: data.workers.length,
+    });
 
     await initDatabase();
     await upsertWorkersFromServer(
@@ -70,19 +81,39 @@ export async function bootstrapOperatorOfflineData(
           : "active") as WorkerStatus,
       })),
     );
-    await ensureOperatorAllocationFromBootstrap(
+    const allocation = await ensureOperatorAllocationFromBootstrap(
       {
         userId: data.operator.userId,
         name: data.operator.name,
         plazaId: data.operator.plazaId ?? "",
         plazaName: data.operator.plazaName ?? "Unassigned",
+        loginCount: data.operator.loginCount,
       },
       data.device,
       localDeviceToken,
     );
 
-    await updateOfflineProfile(userId, data.operator);
-    return data.operator;
+    const verification = await verifyDevice(data.operator.userId);
+    const merged: AuthUser = {
+      ...data.operator,
+      plazaId: verification.plazaId || data.operator.plazaId,
+      plazaName: verification.plazaName || data.operator.plazaName,
+      allocatedDeviceId: verification.deviceId,
+      deviceToken: localDeviceToken,
+      isDeviceAuthorized: verification.authorized,
+      deviceVerifyReason: verification.reason,
+    };
+
+    await syncPlazaGeofenceFromUser(merged);
+    await updateOfflineProfile(userId, merged);
+    console.info("[offlineBootstrap] refresh success", {
+      userId: merged.userId,
+      plazaId: merged.plazaId ?? "",
+      deviceId: merged.allocatedDeviceId ?? "",
+      authorized: merged.isDeviceAuthorized,
+      allocationId: allocation?.id ?? "",
+    });
+    return merged;
   } catch (err) {
     console.warn("[offlineBootstrap] failed — using cached local data:", err);
     return null;

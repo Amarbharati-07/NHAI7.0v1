@@ -1,5 +1,5 @@
 import { clearSyncedRecords, getAppSetting, setAppSetting, purgeAttendanceSynced } from "./database";
-import { getApiBase } from "./apiConfig";
+import { apiFetch, resolveApiBase } from "./apiConfig";
 
 export interface AwsStatus {
   configured: boolean;
@@ -15,9 +15,8 @@ export interface PurgeResult {
 
 export async function fetchAwsStatus(): Promise<AwsStatus> {
   try {
-    const resp = await fetch(`${getApiBase()}/sync/aws-status`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const base = await resolveApiBase();
+    const resp = await apiFetch(`${base}/sync/aws-status`, undefined, 5000);
     if (!resp.ok) return { configured: false };
     return (await resp.json()) as AwsStatus;
   } catch {

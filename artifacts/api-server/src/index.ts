@@ -1,5 +1,6 @@
-import app from "./app";
+import app, { logRegisteredRoutes } from "./app";
 import { logger } from "./lib/logger";
+import { pingDatabase } from "./routes/health";
 
 const rawPort = process.env["PORT"] ?? "3000";
 const port = Number(rawPort);
@@ -17,4 +18,16 @@ app.listen(port, host, (err) => {
   }
 
   logger.info({ port, host }, "Server listening");
+  logRegisteredRoutes();
+
+  void pingDatabase(5_000).then((db) => {
+    if (db.ok) {
+      logger.info("Database connection OK");
+      return;
+    }
+    logger.warn(
+      { error: db.error },
+      "Database not ready — /api/health is OK but admin/login will hang or fail until DATABASE_URL works",
+    );
+  });
 });

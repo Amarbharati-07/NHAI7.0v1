@@ -1,8 +1,9 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router, useFocusEffect } from "expo-router";
+import { Redirect, router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   Platform,
   RefreshControl,
@@ -17,17 +18,22 @@ import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
 import StatCard from "@/components/StatCard";
 import { useAuth } from "@/contexts/AuthContext";
+import { withTimeout } from "@/services/apiConfig";
 import { getAttendanceStats } from "@/services/database";
 import { MOCK_SECURITY_EVENTS } from "@/services/adminData";
 import { useAdminData } from "@/contexts/AdminDataContext";
 import { useColors } from "@/hooks/useColors";
+import { friendlyConnectionMessage, friendlyErrorMessage, friendlyLoadMessage } from "@/services/userMessages";
 
 interface Stats { total: number; present: number; absent: number; pending: number }
+
+const INITIAL_LOAD_COOLDOWN_MS = 15000;
+const dashboardInitialLoadAt = new Map<string, number>();
 
 const OPERATOR_QUICK_ACTIONS = [
   { label: "Worker Directory", icon: "people" as const, color: "#0B5EA8", route: "/worker-directory" },
   { label: "Register Worker", icon: "person-add" as const, color: "#F97316", route: "/register-worker" },
-  { label: "Mark Attendance", icon: "how-to-reg" as const, color: "#EA580C", route: "/manual-attendance" },
+  { label: "Mark Attendance", icon: "how-to-reg" as const, color: "#EA580C", route: "/attendance" },
   { label: "Face Scan", icon: "face" as const, color: "#7C3AED", route: "/attendance" },
   { label: "Attendance History", icon: "history" as const, color: "#0B7ED4", route: "/attendance-history" },
   { label: "Sync Data", icon: "cloud-sync" as const, color: "#16A34A", route: "/sync-center" },
@@ -92,39 +98,93 @@ const akStyles = StyleSheet.create({
 export default function DashboardScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const [stats, setStats] = useState<Stats>({ total: 0, present: 0, absent: 0, pending: 0 });
   const [refreshing, setRefreshing] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
   const isAdmin = user?.role === "admin";
   const { kpis, plazas, operators, devices, refresh: refreshAdminData } = useAdminData();
   const unresolvedAlerts = MOCK_SECURITY_EVENTS.filter((e) => !e.resolved);
   const activeOps = operators.filter((o) => o.status === "active");
 
   const loadStats = useCallback(async () => {
-    const s = await getAttendanceStats();
-    setStats({
-      total: s.activeWorkers,
-      present: s.present,
-      absent: s.absent,
-      pending: s.pending,
-    });
+    try {
+      console.info("[Dashboard] loadStats start");
+      console.info("[Dashboard] attendance stats -> getAttendanceStats()");
+      const s = await withTimeout(getAttendanceStats(), 6000, "Load dashboard stats");
+      console.info("[Dashboard] attendance stats loaded", {
+        activeWorkers: s.activeWorkers,
+        present: s.present,
+        absent: s.absent,
+        pending: s.pending,
+      });
+      setStats({
+        total: s.activeWorkers,
+        present: s.present,
+        absent: s.absent,
+        pending: s.pending,
+      });
+      setDashboardError(null);
+    } catch (err) {
+      const msg = friendlyErrorMessage(err, friendlyLoadMessage());
+      console.warn("[Dashboard] loadStats failed:", err);
+      setDashboardError(msg);
+      // Use fallback values instead of blocking dashboard
+      setStats({ total: 0, present: 0, absent: 0, pending: 0 });
+    } finally {
+      // Ensure loading state is always cleared, even on error
+      // (Dashboard is shown with fallback values)
+    }
   }, []);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => {
+    if (!user?.userId) return;
+    const lastInitialLoad = dashboardInitialLoadAt.get(user.userId) ?? 0;
+    const now = Date.now();
+    if (now - lastInitialLoad < INITIAL_LOAD_COOLDOWN_MS) {
+      console.info("[Dashboard] skipping repeated initial load for user:", user.userId);
+      return;
+    }
+    dashboardInitialLoadAt.set(user.userId, now);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadStats();
-      void refreshAdminData();
-    }, [loadStats, refreshAdminData]),
-  );
+    console.info("[Dashboard] initial load starting for user:", user.userId);
+    void (async () => {
+      try {
+        console.info("[Dashboard] calling loadStats");
+        await loadStats();
+        console.info("[Dashboard] loadStats completed, calling refreshAdminData");
+        await withTimeout(refreshAdminData(), 12000, "Refresh dashboard data");
+        console.info("[Dashboard] refreshAdminData completed");
+      } catch (err) {
+        console.warn("[Dashboard] initial dashboard load failed:", err);
+        setDashboardError(friendlyErrorMessage(err, friendlyConnectionMessage()));
+      }
+    })();
 
+    return () => {
+      // Allow a later re-load after unmount, but keep the current render from looping.
+      // The cooldown still prevents immediate remount storms from re-triggering work.
+      dashboardInitialLoadAt.set(user.userId, Date.now());
+    };
+  }, [user?.userId]);
+
+  /* Manual refresh only; initial load runs once per userId. */
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([loadStats(), refreshAdminData()]);
+      console.info("[Dashboard] manual refresh starting");
+      await Promise.all([
+        loadStats(),
+        withTimeout(refreshAdminData(), 12000, "Refresh dashboard data"),
+      ]);
+      setDashboardError(null);
+      console.info("[Dashboard] manual refresh completed successfully");
+    } catch (err) {
+      console.warn("[Dashboard] manual refresh failed:", err);
+      setDashboardError(friendlyErrorMessage(err, friendlyConnectionMessage()));
     } finally {
       setRefreshing(false);
+      console.info("[Dashboard] manual refresh finished");
     }
   }, [loadStats, refreshAdminData]);
 
@@ -137,6 +197,19 @@ export default function DashboardScreen() {
     router.push(route as never);
   };
 
+  if (isLoading && !user) {
+    return (
+      <View style={[styles.loadingRoot, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading dashboard…</Text>
+      </View>
+    );
+  }
+
+  if (!user) {
+    return <Redirect href="/login" />;
+  }
+
   return (
     <DrawerOverlay>
       <View style={[styles.root, { backgroundColor: colors.background }]}>
@@ -146,6 +219,15 @@ export default function DashboardScreen() {
           contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
         >
+          {dashboardError ? (
+            <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "55" }]}>
+              <MaterialIcons name="error-outline" size={18} color={colors.destructive} />
+              <Text style={[styles.errorText, { color: colors.destructive }]} numberOfLines={2}>
+                {friendlyErrorMessage(dashboardError, friendlyConnectionMessage())}
+              </Text>
+            </View>
+          ) : null}
+
           {/* Welcome / Hero Card */}
           <View style={[styles.welcomeCard, { backgroundColor: colors.primary, borderRadius: colors.radius }]}>
             <View style={styles.welcomeLeft}>
@@ -174,8 +256,8 @@ export default function DashboardScreen() {
               {/* KPI Row 1 */}
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Infrastructure Overview</Text>
               <View style={styles.kpiRow}>
-                <AdminKpiCard label="Toll Plazas" value={plazas.length} icon="business" color={colors.accent} bg={colors.primary + "22"} badge={`${kpis.activePlazas} Active`} />
-                <AdminKpiCard label="Operators" value={operators.length} icon="supervisor-account" color="#3B82F6" bg="#3B82F622" badge={`${kpis.activeOperators} Active`} />
+                <AdminKpiCard label="Toll Plazas" value={kpis.totalPlazas} icon="business" color={colors.accent} bg={colors.primary + "22"} badge={`${kpis.activePlazas} Active`} />
+                <AdminKpiCard label="Operators" value={kpis.totalOperators} icon="supervisor-account" color="#3B82F6" bg="#3B82F622" badge={`${kpis.activeOperators} Active`} />
                 <AdminKpiCard label="Total Workers" value={kpis.totalWorkers} icon="people" color={colors.success} bg={colors.successBg} />
               </View>
 
@@ -367,7 +449,7 @@ export default function DashboardScreen() {
               <View style={styles.actionsGrid}>
                 {OPERATOR_QUICK_ACTIONS.map((a) => (
                   <TouchableOpacity
-                    key={a.route}
+                    key={`${a.route}-${a.label}`}
                     style={[styles.actionCard, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius }]}
                     onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(a.route as never); }}
                     activeOpacity={0.75}
@@ -439,6 +521,10 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 16, gap: 12 },
+  loadingRoot: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loadingText: { fontSize: 14, fontWeight: "600" },
+  errorBanner: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: "row", alignItems: "center", gap: 8 },
+  errorText: { flex: 1, fontSize: 12, fontWeight: "600" },
   welcomeCard: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, marginBottom: 4 },
   welcomeLeft: { gap: 4, flex: 1 },
   welcomeGreet: { color: "rgba(255,255,255,0.7)", fontSize: 13 },

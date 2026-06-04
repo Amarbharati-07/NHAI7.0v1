@@ -3,10 +3,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import { Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import * as Sharing from "expo-sharing";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,7 +12,6 @@ import {
   Modal,
   Platform,
   ScrollView,
-  Share,
   StyleSheet,
   Switch,
   Text,
@@ -41,6 +38,12 @@ import {
   getRegisteredDevices,
   getAllocations,
 } from "@/services/deviceService";
+import {
+  exportAttendanceCsvFile,
+  exportDatabaseBackup,
+  exportDebugLogsFile,
+  restoreDatabaseBackupFromJson,
+} from "@/services/exportService";
 
 /* ─── Types ─── */
 interface SyncStats { pending: number; synced: number; failed: number; lastSync: string | null }
@@ -209,22 +212,42 @@ export default function SettingsScreen() {
         const osVersion  = getDefaultOsVersion(platform);
         const devices    = await getRegisteredDevices();
         const allocs     = await getAllocations();
-        const myDevice   = devices.find((d) => d.deviceToken === token);
-        const myAlloc    = allocs.find((a) => a.deviceToken === token && a.status === "active");
+        const sessionDeviceToken = user?.deviceToken ?? "";
+        const sessionDeviceId = user?.allocatedDeviceId ?? "";
+        const tokenCandidates = [token, sessionDeviceToken].filter(Boolean);
+        const myDevice =
+          devices.find((d) => tokenCandidates.includes(d.deviceToken)) ??
+          (sessionDeviceId ? devices.find((d) => d.id === sessionDeviceId) : undefined);
+        const operatorId = user?.userId?.trim().toUpperCase() ?? "";
+        const myAlloc =
+          (operatorId
+            ? allocs.find(
+                (a) =>
+                  a.operatorId.trim().toUpperCase() === operatorId && a.status === "active",
+              )
+            : undefined) ??
+          allocs.find((a) => tokenCandidates.includes(a.deviceToken) && a.status === "active") ??
+          (sessionDeviceId
+            ? allocs.find((a) => a.deviceId === sessionDeviceId && a.status === "active")
+            : undefined);
+        const resolvedDeviceId = sessionDeviceId || myDevice?.id || "—";
+        const resolvedDeviceToken = sessionDeviceToken || myDevice?.deviceToken || token;
+        const assignedPlaza = user?.plazaName ?? myAlloc?.plazaName ?? myDevice?.assignedPlazaName ?? "Unassigned";
+        const assignedOperator = user?.name ?? myAlloc?.operatorName ?? myDevice?.assignedOperatorName ?? "Unassigned";
         setDeviceInfo({
-          deviceId:        myDevice?.id ?? "—",
-          deviceToken:     token,
+          deviceId:        resolvedDeviceId,
+          deviceToken:     resolvedDeviceToken,
           deviceModel:     myDevice?.deviceModel ?? "Unknown",
           platform:        platform.charAt(0).toUpperCase() + platform.slice(1),
           osVersion:       myDevice?.osVersion ?? osVersion,
-          registrationDate: myDevice?.registrationDate ?? "—",
-          assignedPlaza:   myAlloc?.plazaName ?? myDevice?.assignedPlazaName ?? "Unassigned",
-          assignedOperator: myAlloc?.operatorName ?? myDevice?.assignedOperatorName ?? "Unassigned",
+          registrationDate: myDevice?.registrationDate ?? (resolvedDeviceId !== "—" ? "Registered" : "—"),
+          assignedPlaza,
+          assignedOperator,
           imeiNumber:      myDevice?.imeiNumber ?? "N/A",
         });
       } catch {}
     })();
-  }, []);
+  }, [user?.allocatedDeviceId, user?.deviceToken, user?.name, user?.plazaName]);
 
   /* ── Persist preference ── */
   const setNotifications = async (v: boolean) => {
@@ -242,36 +265,13 @@ export default function SettingsScreen() {
   const handleBackup = async () => {
     setLoadingBackup(true);
     try {
-      const [workers, attendance, devices, allocations] = await Promise.all([
-        getWorkers(), getAttendanceForCSV(), getRegisteredDevices(), getAllocations(),
-      ]);
-      const prefs = await AsyncStorage.multiGet(["@spectra_notifications", "@spectra_auto_sync", "@spectra_theme_mode"]);
-      const payload = {
-        _meta: { app: "SpectraID", version: APP_VERSION, build: BUILD_NUMBER, backupDate: new Date().toISOString(), records: { workers: workers.length, attendance: attendance.length, devices: devices.length, allocations: allocations.length } },
-        workers, attendance, devices, allocations,
-        preferences: Object.fromEntries(prefs.map(([k, v]) => [k, v])),
-      };
-      const json     = JSON.stringify(payload, null, 2);
-      const filename = `spectraID_backup_${new Date().toISOString().split("T")[0]}.json`;
-
-      if (Platform.OS === "web") {
-        const blob = new Blob([json], { type: "application/json" });
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement("a");
-        a.href = url; a.download = filename; a.click();
-        URL.revokeObjectURL(url);
-        toast(`Backup downloaded: ${filename}`);
-      } else {
-        const path = `${Paths.document.uri}${filename}`;
-        await FileSystem.writeAsStringAsync(path, json, { encoding: FileSystem.EncodingType.UTF8 });
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) await Sharing.shareAsync(path, { mimeType: "application/json", dialogTitle: "Save Backup" });
-        toast(`Backup saved: ${filename}`);
-      }
+      const result = await exportDatabaseBackup();
+      toast(result.savedToDevice ? `Backup saved: ${result.filename}` : `Backup prepared: ${result.filename}`);
     } catch (e) {
       toast("Backup failed. Please try again.", false);
+    } finally {
+      setLoadingBackup(false);
     }
-    setLoadingBackup(false);
   };
 
   /* ── Restore ── */
@@ -281,45 +281,27 @@ export default function SettingsScreen() {
       const result = await DocumentPicker.getDocumentAsync({ type: Platform.OS === "web" ? "*/*" : "application/json", copyToCacheDirectory: true });
       if (result.canceled || !result.assets?.[0]) { setLoadingRestore(false); return; }
       const asset = result.assets[0];
-      let json: string;
-      if (Platform.OS === "web") {
-        const resp = await fetch(asset.uri);
-        json = await resp.text();
-      } else {
-        json = await FileSystem.readAsStringAsync(asset.uri);
-      }
-      const data = JSON.parse(json);
-      if (!data._meta || !data.workers || !data.attendance) throw new Error("Invalid backup file");
-      const { _meta } = data;
+      const json = await FileSystem.readAsStringAsync(asset.uri);
+      const parsed = JSON.parse(json);
+      if (!parsed?._meta || !parsed?.data) throw new Error("Invalid backup file");
+      const meta = parsed._meta;
       Alert.alert(
         "Restore Backup?",
-        `Backup from ${new Date(_meta.backupDate).toLocaleDateString("en-IN")}\n\n• ${_meta.records.workers} workers\n• ${_meta.records.attendance} attendance records\n• ${_meta.records.devices} devices\n\nThis will replace all current data. Continue?`,
+        `Backup from ${new Date(meta.backupDate).toLocaleDateString("en-IN")}\n\n• ${meta.records.workers ?? 0} workers\n• ${meta.records.attendance ?? 0} attendance records\n• ${meta.records.syncQueue ?? 0} sync records\n\nThis will replace all current local data. Continue?`,
         [
           { text: "Cancel", style: "cancel", onPress: () => setLoadingRestore(false) },
           {
             text: "Restore", style: "destructive",
             onPress: async () => {
               try {
-                await clearAllAppData();
-                const db2 = await import("@/services/database").then(m => m.getDb());
-                for (const w of data.workers) {
-                  await db2.runAsync(
-                    "INSERT OR IGNORE INTO workers (workerId,fullName,mobile,department,contractorName,employeeType,siteLocation,plazaId,operatorId,deviceToken,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    [w.workerId,w.fullName,w.mobile,w.department,w.contractorName,w.employeeType,w.siteLocation,w.plazaId??"",w.operatorId??"",w.deviceToken??"",w.status??"active",w.createdAt??new Date().toISOString()]
-                  );
-                }
-                for (const a of data.attendance) {
-                  await db2.runAsync(
-                    "INSERT INTO attendance (workerId,date,time,status,syncStatus,plazaId,operatorId,createdAt) VALUES (?,?,?,?,?,?,?,?)",
-                    [a.workerId,a.date,a.time,a.status??"present",a.syncStatus??"pending",a.plazaId??"",a.operatorId??"",a.createdAt??new Date().toISOString()]
-                  );
-                }
-                if (data.devices) await AsyncStorage.setItem("@spectra_registered_devices", JSON.stringify(data.devices));
-                if (data.allocations) await AsyncStorage.setItem("@spectra_allocations", JSON.stringify(data.allocations));
+                const restored = await restoreDatabaseBackupFromJson(json);
                 getSyncStats().then(setSyncStats);
-                toast(`Restored: ${_meta.records.workers} workers, ${_meta.records.attendance} records`);
-              } catch { toast("Restore failed. File may be corrupted.", false); }
-              setLoadingRestore(false);
+                toast(`Restored: ${restored.workers} workers, ${restored.attendance} records`);
+              } catch {
+                toast("Restore failed. File may be corrupted.", false);
+              } finally {
+                setLoadingRestore(false);
+              }
             },
           },
         ]
@@ -334,36 +316,13 @@ export default function SettingsScreen() {
   const handleExport = async () => {
     setLoadingExport(true);
     try {
-      const records = await getAttendanceForCSV();
-      const header  = "Worker ID,Worker Name,Department,Contractor,Date,Time,Status,Sync Status,Plaza ID,Operator ID\n";
-      const rows    = records.map((r) =>
-        [r.workerIdCode ?? "", r.workerName ?? "", (r as any).department ?? "", (r as any).contractorName ?? "", r.date, r.time, r.status, r.syncStatus, r.plazaId ?? "", r.operatorId ?? ""].join(",")
-      ).join("\n");
-      const csv      = header + rows;
-      const filename = `spectraID_attendance_${new Date().toISOString().split("T")[0]}.csv`;
-
-      if (Platform.OS === "web") {
-        const blob = new Blob([csv], { type: "text/csv" });
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement("a");
-        a.href = url; a.download = filename; a.click();
-        URL.revokeObjectURL(url);
-        toast(`Exported ${records.length} records to ${filename}`);
-      } else {
-        const path = `${Paths.document.uri}${filename}`;
-        await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-          await Sharing.shareAsync(path, { mimeType: "text/csv", dialogTitle: "Export CSV" });
-        } else {
-          await Share.share({ title: filename, message: csv.slice(0, 2000) });
-        }
-        toast(`Exported ${records.length} attendance records`);
-      }
+      const result = await exportAttendanceCsvFile();
+      toast(result.savedToDevice ? `CSV saved: ${result.filename}` : `CSV prepared: ${result.filename}`);
     } catch {
       toast("Export failed. Please try again.", false);
+    } finally {
+      setLoadingExport(false);
     }
-    setLoadingExport(false);
   };
 
   /* ── Clear Cache ── */
@@ -755,8 +714,12 @@ export default function SettingsScreen() {
               <TouchableOpacity
                 style={[st.closeBtn, { backgroundColor: colors.muted, flex: 1 }]}
                 onPress={async () => {
-                  const text = debugLogs.join("\n");
-                  await Share.share({ title: "SpectraID Debug Logs", message: text });
+                  try {
+                    const result = await exportDebugLogsFile(debugLogs);
+                    toast(result.savedToDevice ? `Logs saved: ${result.filename}` : `Logs prepared: ${result.filename}`);
+                  } catch {
+                    toast("Could not export debug logs.", false);
+                  }
                 }}
               >
                 <Ionicons name="share-outline" size={16} color={colors.foreground} />

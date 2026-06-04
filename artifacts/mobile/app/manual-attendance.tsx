@@ -93,26 +93,34 @@ export default function ManualAttendanceScreen() {
   const nowTime = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
 
   const initLocation = useCallback(async () => {
-    if (Platform.OS === "web") { setLocPermission("denied"); return; }
-    setLocLoading(true);
-    const granted = await requestLocationPermission();
-    setLocPermission(granted ? "granted" : "denied");
-    if (granted) {
-      const loc = await getCurrentLocation();
-      locRef.current = loc;
-      setLocation(loc);
-      if (loc && user?.plazaId) {
-        const geo = checkGeofence(user.plazaId, loc.latitude, loc.longitude);
-        setGeofenceOk(geo.inBounds);
-        setGeofenceDist(geo.distance);
+    try {
+      setLocLoading(true);
+      const granted = await requestLocationPermission();
+      setLocPermission(granted ? "granted" : "denied");
+      if (granted) {
+        const loc = await getCurrentLocation();
+        locRef.current = loc;
+        setLocation(loc);
+        if (loc && user?.plazaId) {
+          const geo = await checkGeofence(user.plazaId, loc.latitude, loc.longitude);
+          setGeofenceOk(geo.configured ? geo.inBounds : null);
+          setGeofenceDist(geo.distance);
+          if (!geo.configured) {
+            Alert.alert("Plaza GPS coordinates not configured", geo.message);
+          }
+        }
       }
+    } catch (err) {
+      console.warn("[manual-attendance] initLocation failed:", err);
+      setLocPermission("denied");
+    } finally {
+      setLocLoading(false);
     }
-    setLocLoading(false);
   }, [user?.plazaId]);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
+      setLoading(true);
       const allWorkers = user?.plazaId
         ? await getWorkersByPlaza(user.plazaId, "active")
         : await getWorkers();
@@ -128,8 +136,11 @@ export default function ManualAttendanceScreen() {
         markedToday: todayMap.get(w.id!) ?? null,
         markStatus: "idle" as MarkStatus,
       })));
-    } catch {}
-    setLoading(false);
+    } catch (err) {
+      console.warn("[manual-attendance] load failed:", err);
+    } finally {
+      setLoading(false);
+    }
   }, [user?.plazaId, today]);
 
   useEffect(() => {

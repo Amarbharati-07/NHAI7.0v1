@@ -19,6 +19,7 @@ import DrawerOverlay from "@/components/DrawerOverlay";
 import { getWeeklyAttendance, getAttendanceRecords, getWorkers } from "@/services/database";
 import { exportAttendanceCSV, exportWeeklyCSV, exportWorkersCSV } from "@/services/reportService";
 import { useColors } from "@/hooks/useColors";
+import { friendlyErrorMessage } from "@/services/userMessages";
 
 type Period = "daily" | "weekly" | "monthly";
 
@@ -45,20 +46,25 @@ export default function ReportsScreen() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [data, records, workers] = await Promise.all([
-        getWeeklyAttendance(),
-        getAttendanceRecords(),
-        getWorkers(),
-      ]);
-      setWeeklyData(data);
-      const today = new Date().toISOString().split("T")[0];
-      const todayRecs = records.filter((r) => r.date === today);
-      const present = todayRecs.filter((r) => r.status === "present").length;
-      const absent  = todayRecs.filter((r) => r.status === "absent").length;
-      const total   = workers.length;
-      const rate    = total > 0 ? `${Math.round((present / total) * 100)}%` : "0%";
-      setLiveStats({ total, present, absent, rate });
-      setLoading(false);
+      try {
+        const [data, records, workers] = await Promise.all([
+          getWeeklyAttendance(),
+          getAttendanceRecords(),
+          getWorkers(),
+        ]);
+        setWeeklyData(data);
+        const today = new Date().toISOString().split("T")[0];
+        const todayRecs = records.filter((r) => r.date === today);
+        const present = todayRecs.filter((r) => r.status === "present").length;
+        const absent  = todayRecs.filter((r) => r.status === "absent").length;
+        const total   = workers.length;
+        const rate    = total > 0 ? `${Math.round((present / total) * 100)}%` : "0%";
+        setLiveStats({ total, present, absent, rate });
+      } catch (err) {
+        console.warn("[reports] initial load failed:", err);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -75,9 +81,9 @@ export default function ReportsScreen() {
       } else {
         result = await exportWorkersCSV();
       }
-      if (!result.success) Alert.alert("Export Failed", result.error ?? "Could not export.");
+      if (!result.success) Alert.alert("Export Failed", friendlyErrorMessage(result.error, "Could not export."));
     } catch (e) {
-      Alert.alert("Export Failed", (e as Error).message);
+      Alert.alert("Export Failed", friendlyErrorMessage(e, "Could not export."));
     } finally {
       setExporting(null);
     }

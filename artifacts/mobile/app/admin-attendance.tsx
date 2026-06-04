@@ -21,7 +21,8 @@ import { getWeeklyAttendance } from "@/services/database";
 import { syncService } from "@/services/SyncService";
 import { exportAttendanceCSV, exportWeeklyCSV, exportWorkersCSV } from "@/services/reportService";
 import { useColors } from "@/hooks/useColors";
-import { getApiBase } from "@/services/apiConfig";
+import { apiFetch, resolveApiBase } from "@/services/apiConfig";
+import { friendlyErrorMessage } from "@/services/userMessages";
 
 type ViewTab = "live" | "trends" | "records" | "alerts" | "reports";
 
@@ -85,20 +86,28 @@ export default function AdminAttendanceScreen() {
   const loadApiStats = useCallback(async () => {
     if (!isOnline) return;
     try {
-      const resp = await fetch(`${getApiBase()}/attendance/stats`);
+      const base = await resolveApiBase();
+      console.info("[admin-attendance] loadApiStats ->", base);
+      const resp = await apiFetch(`${base}/attendance/stats`, undefined, 8000);
       if (resp.ok) setApiStats(await resp.json());
-    } catch {}
+    } catch (err) {
+      console.warn("[admin-attendance] loadApiStats failed:", err);
+    }
   }, [isOnline]);
 
   const loadApiWeekly = useCallback(async () => {
     if (!isOnline) return;
     try {
-      const resp = await fetch(`${getApiBase()}/attendance/weekly`);
+      const base = await resolveApiBase();
+      console.info("[admin-attendance] loadApiWeekly ->", base);
+      const resp = await apiFetch(`${base}/attendance/weekly`, undefined, 8000);
       if (resp.ok) {
         const data: { day: string; count: number }[] = await resp.json();
         setWeeklyData(data);
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[admin-attendance] loadApiWeekly failed:", err);
+    }
   }, [isOnline]);
 
   const loadApiRecords = useCallback(async () => {
@@ -106,13 +115,18 @@ export default function AdminAttendanceScreen() {
     setRecordsLoading(true);
     try {
       const today = new Date().toISOString().split("T")[0];
-      const resp = await fetch(`${getApiBase()}/attendance?date=${today}&limit=100`);
+      const base = await resolveApiBase();
+      console.info("[admin-attendance] loadApiRecords ->", base);
+      const resp = await apiFetch(`${base}/attendance?date=${today}&limit=100`, undefined, 8000);
       if (resp.ok) {
         const data = await resp.json();
         setApiRecords(data.records ?? []);
       }
-    } catch {}
-    setRecordsLoading(false);
+    } catch (err) {
+      console.warn("[admin-attendance] loadApiRecords failed:", err);
+    } finally {
+      setRecordsLoading(false);
+    }
   }, [isOnline]);
 
   useEffect(() => {
@@ -127,14 +141,19 @@ export default function AdminAttendanceScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([
-      loadLocalWeekly(),
-      refreshAdminData(),
-      loadApiStats(),
-      loadApiWeekly(),
-      tab === "records" ? loadApiRecords() : Promise.resolve(),
-    ]);
-    setRefreshing(false);
+    try {
+      await Promise.all([
+        loadLocalWeekly(),
+        refreshAdminData(),
+        loadApiStats(),
+        loadApiWeekly(),
+        tab === "records" ? loadApiRecords() : Promise.resolve(),
+      ]);
+    } catch (err) {
+      console.warn("[admin-attendance] refresh failed:", err);
+    } finally {
+      setRefreshing(false);
+    }
   }, [loadLocalWeekly, refreshAdminData, loadApiStats, loadApiWeekly, loadApiRecords, tab]);
 
   const plazaAttendance = plazas.map((p) => ({
@@ -475,10 +494,10 @@ export default function AdminAttendanceScreen() {
                       }
 
                       if (!result.success) {
-                        Alert.alert("Export Failed", result.error ?? "Could not generate report.");
+                        Alert.alert("Export Failed", friendlyErrorMessage(result.error, "Could not generate report."));
                       }
                     } catch (e) {
-                      Alert.alert("Export Failed", (e as Error).message);
+                      Alert.alert("Export Failed", friendlyErrorMessage(e, "Could not generate report."));
                     }
                   };
 

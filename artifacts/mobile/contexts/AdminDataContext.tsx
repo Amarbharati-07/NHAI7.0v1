@@ -11,13 +11,15 @@ import { Platform } from "react-native";
 import type { TollPlaza, AdminOperator } from "@/services/adminData";
 import type { RegisteredDevice, OperatorAllocation } from "@/services/deviceService";
 import * as adminStore from "@/services/adminStore";
-import { checkApiHealth, getApiBase, isApiConfigured } from "@/services/apiConfig";
+import type { AdminStats } from "@/services/adminStore";
+import { isApiConfigured, withTimeout } from "@/services/apiConfig";
 import {
   getRegisteredDevices,
   getAllocations,
   deleteRegisteredDevice,
 } from "@/services/deviceService";
 import { getAttendanceStats, getSyncStats, initDatabase } from "@/services/database";
+import { friendlyConnectionMessage, friendlyErrorMessage, isTechnicalErrorMessage } from "@/services/userMessages";
 
 /* ─── Types ─── */
 
@@ -53,25 +55,85 @@ function countActiveDevices(devices: RegisteredDevice[]): number {
   return devices.filter((d) => d.status !== "inactive").length;
 }
 
+function preferApiCount(apiCount: number | undefined, localCount: number): number {
+  if (typeof apiCount !== "number") return localCount;
+  return apiCount > 0 ? apiCount : localCount;
+}
+
+function countDevicesForPlaza(plaza: TollPlaza, devices: RegisteredDevice[]): number {
+  return devices.filter((device) => {
+    const matchesPlaza =
+      (device.assignedPlazaId && device.assignedPlazaId === plaza.id) ||
+      (device.assignedPlazaName && device.assignedPlazaName === plaza.name);
+    return matchesPlaza && device.status !== "inactive";
+  }).length;
+}
+
+function countDevicesForOperator(operator: AdminOperator, allocations: OperatorAllocation[]): number {
+  return allocations.filter((alloc) => alloc.operatorId === operator.userId && alloc.status === "active").length;
+}
+
+function enrichPlazasWithDeviceCounts(plazas: TollPlaza[], devices: RegisteredDevice[]): TollPlaza[] {
+  return plazas.map((plaza) => ({
+    ...plaza,
+    activeDevices: countDevicesForPlaza(plaza, devices),
+  }));
+}
+
+function enrichOperatorsWithDeviceCounts(operators: AdminOperator[], allocations: OperatorAllocation[]): AdminOperator[] {
+  return operators.map((operator) => ({
+    ...operator,
+    deviceCount: countDevicesForOperator(operator, allocations),
+  }));
+}
+
+function dedupeAllocationsForUi(allocations: OperatorAllocation[]): OperatorAllocation[] {
+  const seenIds = new Set<string>();
+  const seenBusinessKeys = new Set<string>();
+  return allocations.filter((allocation) => {
+    const allocationId = String(allocation.id ?? "").trim().toUpperCase();
+    const businessKey = `${allocation.deviceId}|${allocation.operatorId}|${allocation.plazaId}|${allocation.status}`.toUpperCase();
+    if (seenIds.has(allocationId) || seenBusinessKeys.has(businessKey)) return false;
+    seenIds.add(allocationId);
+    seenBusinessKeys.add(businessKey);
+    return true;
+  });
+}
+
 function buildKpis(
   plazas: TollPlaza[],
   operators: AdminOperator[],
   devices: RegisteredDevice[],
   attendance: AttendanceKpis,
+  dashboardStats?: AdminStats | null,
 ): AdminKpis {
   const totalWorkers = attendance.activeWorkers;
   return {
-    totalPlazas: plazas.length,
-    activePlazas: plazas.filter((x) => x.status === "active").length,
-    totalOperators: operators.length,
-    activeOperators: operators.filter((x) => x.status === "active").length,
+    totalPlazas: preferApiCount(dashboardStats?.totalPlazas, plazas.length),
+    activePlazas: preferApiCount(dashboardStats?.activePlazas, plazas.filter((x) => x.status === "active").length),
+    totalOperators: preferApiCount(dashboardStats?.totalOperators, operators.length),
+    activeOperators: preferApiCount(dashboardStats?.activeOperators, operators.filter((x) => x.status === "active").length),
     totalWorkers,
     presentToday: totalWorkers === 0 ? 0 : attendance.present,
     absentToday: totalWorkers === 0 ? 0 : attendance.absent,
-    activeDevices: countActiveDevices(devices),
-    unauthorizedAttempts: 0,
+    activeDevices: preferApiCount(dashboardStats?.activeDevices, countActiveDevices(devices)),
+    unauthorizedAttempts: dashboardStats?.unauthorizedAttempts ?? 0,
     pendingSync: attendance.pendingSync,
   };
+}
+
+function isConnectivityError(err: unknown): boolean {
+  const message =
+    err instanceof Error ? err.message : String(err ?? "");
+  const lower = message.toLowerCase();
+  return (
+    isTechnicalErrorMessage(message) ||
+    lower.includes("cannot reach api") ||
+    lower.includes("timed out") ||
+    lower.includes("network request failed") ||
+    lower.includes("failed to fetch") ||
+    lower.includes("offline")
+  );
 }
 
 interface AdminDataContextType {
@@ -85,8 +147,14 @@ interface AdminDataContextType {
   apiOnline: boolean;
   apiError: string | null;
   refresh: () => Promise<void>;
-  addPlaza: (data: Pick<TollPlaza, "name" | "route" | "location">) => Promise<TollPlaza>;
-  updatePlaza: (id: string, changes: Partial<TollPlaza>) => Promise<void>;
+  getPlazaById: (id: string) => Promise<TollPlaza | null>;
+  addPlaza: (
+    data: Pick<
+      TollPlaza,
+      "name" | "route" | "location" | "latitude" | "longitude" | "radiusMeters" | "operatorId" | "operatorName"
+    > & { reassignOperator?: boolean },
+  ) => Promise<TollPlaza>;
+  updatePlaza: (id: string, changes: Partial<TollPlaza> & { reassignOperator?: boolean }) => Promise<TollPlaza[] | void>;
   deletePlaza: (id: string) => Promise<void>;
   addOperator: (data: import("@/services/adminStore").CreateOperatorPayload) => Promise<AdminOperator>;
   updateOperatorData: (
@@ -110,11 +178,15 @@ const AdminDataContext = createContext<AdminDataContextType>({
   apiOnline: true,
   apiError: null,
   refresh: async () => {},
+  getPlazaById: async () => null,
   addPlaza: async () => ({
     id: "",
     name: "",
     route: "",
     location: "",
+    latitude: null,
+    longitude: null,
+    radiusMeters: 300,
     operatorId: "",
     operatorName: "",
     workerCount: 0,
@@ -151,6 +223,7 @@ export function AdminDataProvider({ children }: { children: React.ReactNode }) {
   const [operators, setOperators] = useState<AdminOperator[]>([]);
   const [devices, setDevices] = useState<RegisteredDevice[]>([]);
   const [allocations, setAllocations] = useState<OperatorAllocation[]>([]);
+  const [dashboardStats, setDashboardStats] = useState<AdminStats | null>(null);
   const [attendanceKpis, setAttendanceKpis] = useState<AttendanceKpis>(EMPTY_ATTENDANCE);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -160,79 +233,121 @@ export function AdminDataProvider({ children }: { children: React.ReactNode }) {
   const initialLoadDoneRef = useRef(false);
 
   const kpis = useMemo(
-    () => buildKpis(plazas, operators, devices, attendanceKpis),
-    [plazas, operators, devices, attendanceKpis],
+    () => buildKpis(plazas, operators, devices, attendanceKpis, dashboardStats),
+    [plazas, operators, devices, attendanceKpis, dashboardStats],
   );
 
   const refresh = useCallback(async () => {
     if (refreshPromiseRef.current) {
+      console.info("[AdminDataContext] refresh already in progress, returning pending promise");
       return refreshPromiseRef.current;
     }
 
     const run = (async () => {
+      console.info("[AdminDataContext] refresh starting");
       setRefreshing(true);
       try {
-        const healthPromise = isApiConfigured()
-          ? checkApiHealth().catch(() => false)
-          : Promise.resolve(true);
+        console.info("[AdminDataContext] fetching plazas, operators, devices, allocations");
+        const [plazaResult, operatorResult, deviceResult, allocResult, statsResult] = await Promise.allSettled([
+          withTimeout(adminStore.getTollPlazas(), 15000, "Load toll plazas"),
+          withTimeout(adminStore.getOperators(), 15000, "Load operators"),
+          withTimeout(getRegisteredDevices(), 10000, "Load registered devices"),
+          withTimeout(getAllocations(), 10000, "Load device allocations"),
+          withTimeout(adminStore.getAdminStats(), 15000, "Load admin dashboard stats"),
+        ]);
 
-        const [plazaResult, operatorResult, deviceResult, allocResult, apiOk] =
-          await Promise.all([
-            Promise.allSettled([
-              adminStore.getTollPlazas(),
-              adminStore.getOperators(),
-              getRegisteredDevices(),
-              getAllocations(),
-            ]),
-            healthPromise,
-          ]).then(([results, ok]) => [...results, ok] as const);
-
-        if (isApiConfigured()) {
-          setApiOnline(apiOk);
-          setApiError(
-            apiOk ? null : `Cannot reach API at ${getApiBase()}. Start the API server on your Mac.`,
-          );
+        const nextDevices = deviceResult.status === "fulfilled" ? deviceResult.value : devices;
+        const nextAllocations = allocResult.status === "fulfilled" ? dedupeAllocationsForUi(allocResult.value) : allocations;
+        if (plazaResult.status === "fulfilled") {
+          console.info("[AdminDataContext] setting plazas:", plazaResult.value.length);
+          setPlazas(enrichPlazasWithDeviceCounts(plazaResult.value, nextDevices));
         }
-
-        if (plazaResult.status === "fulfilled") setPlazas(plazaResult.value);
-        if (operatorResult.status === "fulfilled") setOperators(operatorResult.value);
-        if (deviceResult.status === "fulfilled") setDevices(deviceResult.value);
-        if (allocResult.status === "fulfilled") setAllocations(allocResult.value);
+        if (operatorResult.status === "fulfilled") {
+          console.info("[AdminDataContext] setting operators:", operatorResult.value.length);
+          setOperators(enrichOperatorsWithDeviceCounts(operatorResult.value, nextAllocations));
+        }
+        if (deviceResult.status === "fulfilled") {
+          console.info("[AdminDataContext] setting devices:", nextDevices.length);
+          setDevices(nextDevices);
+        }
+        if (allocResult.status === "fulfilled") {
+          console.info("[AdminDataContext] setting allocations:", nextAllocations.length);
+          setAllocations(nextAllocations);
+          console.info("[AdminDataContext] allocated devices list:", nextAllocations.map((allocation) => ({
+            id: allocation.id,
+            deviceId: allocation.deviceId,
+            operatorId: allocation.operatorId,
+            plazaId: allocation.plazaId,
+            status: allocation.status,
+          })));
+        }
+        if (statsResult.status === "fulfilled") {
+          console.info("[AdminDataContext] dashboard stats response:", statsResult.value);
+          console.info("[AdminDataContext] plazas count:", statsResult.value.totalPlazas);
+          console.info("[AdminDataContext] operators count:", statsResult.value.totalOperators);
+          console.info("[AdminDataContext] devices count:", statsResult.value.activeDevices);
+          setDashboardStats(statsResult.value);
+        } else {
+          console.warn("[AdminDataContext] dashboard stats unavailable:", statsResult.reason);
+          setDashboardStats(null);
+        }
 
         if (plazaResult.status === "rejected") {
-          console.error("[AdminDataContext] plazas fetch error:", plazaResult.reason);
+          console.warn("[AdminDataContext] plazas fetch failed:", plazaResult.reason);
         }
         if (operatorResult.status === "rejected") {
-          console.error("[AdminDataContext] operators fetch error:", operatorResult.reason);
+          console.warn("[AdminDataContext] operators fetch failed:", operatorResult.reason);
         }
 
-        if (isApiConfigured() && plazaResult.status === "fulfilled") {
-          setApiOnline(true);
-          setApiError(null);
-        }
+        const apiFailed =
+          plazaResult.status === "rejected" || operatorResult.status === "rejected";
+        const apiSucceeded =
+          plazaResult.status === "fulfilled" || operatorResult.status === "fulfilled";
 
-        try {
-          if (Platform.OS !== "web") await initDatabase();
-          const [attStats, syncStats] = await Promise.all([
-            getAttendanceStats(),
-            getSyncStats(),
-          ]);
-          setAttendanceKpis({
-            activeWorkers: attStats.activeWorkers,
-            present: attStats.present,
-            absent: attStats.absent,
-            pendingSync: syncStats.pending,
-          });
-        } catch (statsErr) {
-          console.error("[AdminDataContext] attendance/sync stats error:", statsErr);
-        }
-      } catch (err) {
-        console.error("[AdminDataContext] refresh error:", err);
         if (isApiConfigured()) {
-          setApiOnline(false);
-          setApiError(err instanceof Error ? err.message : "API unavailable");
+          if (apiSucceeded) {
+            console.info("[AdminDataContext] API online");
+            setApiOnline(true);
+            setApiError(null);
+          } else if (apiFailed) {
+            const apiReason =
+              plazaResult.status === "rejected"
+                ? plazaResult.reason
+                : operatorResult.status === "rejected"
+                  ? operatorResult.reason
+                  : undefined;
+            if (isConnectivityError(apiReason)) {
+              console.warn("[AdminDataContext] API offline:", apiReason);
+              setApiOnline(false);
+              setApiError(friendlyConnectionMessage());
+            } else if (apiReason) {
+              setApiError(friendlyErrorMessage(apiReason, friendlyConnectionMessage()));
+            }
+          }
         }
+
+        void (async () => {
+          try {
+            console.info("[AdminDataContext] loading attendance stats");
+            if (Platform.OS !== "web") await initDatabase();
+            const [attStats, syncStats] = await withTimeout(
+              Promise.all([getAttendanceStats(), getSyncStats()]),
+              10000,
+              "Load dashboard stats",
+            );
+            console.info("[AdminDataContext] attendance stats loaded:", { present: attStats.present, absent: attStats.absent });
+            setAttendanceKpis({
+              activeWorkers: attStats.activeWorkers,
+              present: attStats.present,
+              absent: attStats.absent,
+              pendingSync: syncStats.pending,
+            });
+          } catch (err) {
+            console.warn("[AdminDataContext] attendance/sync stats unavailable:", err);
+          }
+        })();
       } finally {
+        console.info("[AdminDataContext] refresh completed");
         setRefreshing(false);
         refreshPromiseRef.current = null;
       }
@@ -242,31 +357,52 @@ export function AdminDataProvider({ children }: { children: React.ReactNode }) {
     return run;
   }, []);
 
+  const getPlazaById = useCallback(async (id: string) => {
+    return adminStore.getTollPlazaById(id);
+  }, []);
+
   useEffect(() => {
     if (initialLoadDoneRef.current) return;
-    refresh().finally(() => {
-      initialLoadDoneRef.current = true;
-      setLoading(false);
-    });
-  }, [refresh]);
+    console.info("[AdminDataContext] initial admin data load");
+    void refresh()
+      .catch(() => {
+        console.warn("[AdminDataContext] initial load failed");
+      })
+      .finally(() => {
+        console.info("[AdminDataContext] initial load completed");
+        initialLoadDoneRef.current = true;
+        setLoading(false);
+      });
+    // Only run once on mount - don't add refresh to dependencies as it's stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 
   const addPlaza = useCallback(
-    async (data: Pick<TollPlaza, "name" | "route" | "location">) => {
+    async (
+      data: Pick<
+        TollPlaza,
+        "name" | "route" | "location" | "latitude" | "longitude" | "radiusMeters" | "operatorId" | "operatorName"
+      > & { reassignOperator?: boolean },
+    ) => {
       const { plaza, plazas: next } = await adminStore.addTollPlaza(data);
       setPlazas(next);
-      await refresh();
+      void refresh().catch((err) => {
+        console.warn("[AdminDataContext] refresh after add plaza failed:", err);
+      });
       return plaza;
     },
     [refresh],
   );
 
   const updatePlaza = useCallback(
-    async (id: string, changes: Partial<TollPlaza>) => {
-      setPlazas((prev) => prev.map((p) => (p.id === id ? { ...p, ...changes } : p)));
+    async (id: string, changes: Partial<TollPlaza> & { reassignOperator?: boolean }) => {
+      const { reassignOperator: _ignored, ...plazaChanges } = changes;
+      setPlazas((prev) => prev.map((p) => (p.id === id ? { ...p, ...plazaChanges } : p)));
       try {
         const synced = await adminStore.updateTollPlaza(id, changes);
         if (synced) setPlazas(synced);
+        return synced;
       } finally {
         await refresh();
       }
@@ -307,7 +443,9 @@ export function AdminDataProvider({ children }: { children: React.ReactNode }) {
         const synced = await adminStore.updateOperator(id, changes);
         if (synced) setOperators(synced);
       } finally {
-        await refresh();
+        void refresh().catch((err) => {
+          console.warn("[AdminDataContext] refresh after operator update failed:", err);
+        });
       }
     },
     [refresh],
@@ -352,6 +490,7 @@ export function AdminDataProvider({ children }: { children: React.ReactNode }) {
         apiOnline,
         apiError,
         refresh,
+        getPlazaById,
         addPlaza,
         updatePlaza,
         deletePlaza,

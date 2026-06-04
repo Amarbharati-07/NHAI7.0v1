@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import {
@@ -19,9 +18,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AppHeader from "@/components/AppHeader";
 import DrawerOverlay from "@/components/DrawerOverlay";
+import GeofenceGate from "@/components/GeofenceGate";
 import UnauthorizedDeviceScreen from "@/components/UnauthorizedDeviceScreen";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminData } from "@/contexts/AdminDataContext";
+import { apiPostJson } from "@/services/apiConfig";
+import * as FaceRecognitionService from "@/services/FaceRecognitionService";
+import { syncService } from "@/services/SyncService";
 import {
   type FacePose,
   POSE_CONFIGS,
@@ -29,7 +32,8 @@ import {
   getSessionCaptures,
   saveFaceImagesToDb,
 } from "@/services/FaceCaptureService";
-import { insertWorker } from "@/services/database";
+import { insertWorker, updateWorkerProcessingState } from "@/services/database";
+import { getAllocations, getOrCreateDeviceToken, getRegisteredDevices } from "@/services/deviceService";
 import { useColors } from "@/hooks/useColors";
 
 const TOTAL_POSES = POSE_CONFIGS.length;
@@ -85,6 +89,18 @@ const fst = StyleSheet.create({
   err: { fontSize: 11 },
 });
 
+const EMBEDDING_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 /* ─── Module-level SelectField ─── */
 interface SelectFieldProps {
   label: string; options: string[]; value: string;
@@ -134,7 +150,7 @@ interface FormState {
 export default function RegisterWorkerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, refreshDeviceAuth } = useAuth();
   const { refresh: refreshAdminData } = useAdminData();
   const sessionId = useRef(`sess_${Date.now()}`).current;
 
@@ -152,21 +168,51 @@ export default function RegisterWorkerScreen() {
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
+  const [submitError, setSubmitError] = useState<string>("");
 
   /* Captures refreshed on focus after returning from guided-face-capture */
   const [captures, setCaptures] = useState<Partial<Record<FacePose, string>>>({});
   const captureCount = Object.keys(captures).length;
   const allCaptured = captureCount === TOTAL_POSES;
+  const geofenceBlocked = user?.role === "operator" && user?.geofenceAllowed === false;
 
   useFocusEffect(
     useCallback(() => {
+      void (async () => {
+        try {
+          const currentDeviceToken = await getOrCreateDeviceToken();
+          const devices = await getRegisteredDevices();
+          const allocations = await getAllocations();
+          const currentDevice = devices.find((device) => device.deviceToken === currentDeviceToken);
+          const matchedAllocation =
+            allocations.find((allocation) => allocation.operatorId === user?.userId && allocation.deviceToken.trim() === currentDeviceToken) ??
+            allocations.find((allocation) => allocation.operatorId === user?.userId && allocation.deviceId === currentDevice?.id) ??
+            allocations.find((allocation) => allocation.operatorId === user?.userId && allocation.status === "active") ??
+            null;
+          console.info("DEVICE_VERIFICATION", {
+            screen: "register-worker",
+            operatorId: user?.userId ?? "",
+            allocatedDeviceId: matchedAllocation?.deviceId ?? user?.allocatedDeviceId ?? "",
+            allocatedDeviceToken: matchedAllocation?.deviceToken ?? user?.deviceToken ?? "",
+            currentDeviceId: currentDevice?.id ?? "",
+            currentDeviceToken,
+            reason: user?.deviceVerifyReason ?? "",
+            authorized: user?.isDeviceAuthorized ?? null,
+          });
+        } catch (err) {
+          console.warn("[register-worker] verification snapshot failed:", err);
+        }
+      })();
+      if (user?.role === "operator") {
+        void refreshDeviceAuth();
+      }
       const session = getSessionCaptures(sessionId);
       const uris: Partial<Record<FacePose, string>> = {};
       for (const [pose, result] of Object.entries(session)) {
         uris[pose as FacePose] = result.uri;
       }
       setCaptures(uris);
-    }, [sessionId])
+    }, [sessionId, refreshDeviceAuth, user?.allocatedDeviceId, user?.deviceToken, user?.deviceVerifyReason, user?.isDeviceAuthorized, user?.role, user?.userId])
   );
 
   const setField = useCallback((field: keyof FormState, val: string) => {
@@ -194,24 +240,112 @@ export default function RegisterWorkerScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
+
+    const refreshed = await refreshDeviceAuth();
+    const current = refreshed ?? user;
+    if (current?.role === "operator" && current.geofenceAllowed === false) {
+      Alert.alert(
+        "Outside Authorized Toll Plaza",
+        "You are outside the authorized toll plaza location. Attendance operations are not allowed.",
+      );
+      return;
+    }
+
+    const payload = {
+      workerId: form.workerId.trim(),
+      fullName: form.fullName.trim(),
+      mobile: form.mobile.trim(),
+      department: form.department.trim(),
+      contractorName: form.contractorName.trim(),
+      employeeType: form.employeeType.trim(),
+      siteLocation: form.siteLocation.trim(),
+      plazaId: user?.plazaId ?? "",
+      operatorId: user?.userId ?? "",
+      deviceToken: user?.deviceToken ?? "",
+      status: "active" as const,
+    };
+
+    console.info("[REGISTER] Button clicked", payload);
+    console.info("[REGISTER] Validation Passed");
+    console.info("[REGISTER] Face Images Count", captureCount);
+    console.info("[REGISTER] Sending worker data", payload);
+    console.info("[REGISTER] Promise timeout for embedding generation = 10 seconds");
+    setSubmitError("");
     setLoading(true);
     try {
+      console.info("[REGISTER] SQLite Save Start");
       const workerId = await insertWorker({
-        ...form,
-        plazaId:     user?.plazaId ?? "",
-        operatorId:  user?.userId  ?? "",
-        deviceToken: user?.deviceToken ?? "",
+        ...payload,
+        syncStatus: "pending",
+        embeddingStatus: "pending",
+        registrationAt: new Date().toISOString(),
       });
+      console.info("[REGISTER] Sync Queue Added", { workerId });
+
+      console.info("[REGISTER] Saving Worker To SQLite");
       await saveFaceImagesToDb(workerId, sessionId);
+      console.info("[REGISTER] SQLite Save Success", { workerId, captures: captureCount });
+
+      const capturedFaces = Object.values(getSessionCaptures(sessionId));
+      void (async () => {
+        console.info("[REGISTER] Starting Embedding Generation", { workerId, faces: capturedFaces.length });
+        try {
+          await withTimeout((async () => {
+            await FaceRecognitionService.initModels();
+            for (const capture of capturedFaces) {
+              await FaceRecognitionService.registerWorkerFace(
+                workerId,
+                payload.workerId,
+                payload.fullName,
+                capture.uri,
+                capture.pose,
+              );
+            }
+          })(), EMBEDDING_TIMEOUT_MS, "Embedding generation");
+          await updateWorkerProcessingState(workerId, { embeddingStatus: "ready" });
+          console.info("[REGISTER] Embedding Complete", { workerId, faces: capturedFaces.length });
+        } catch (embeddingErr) {
+          console.error("[REGISTER] Error", embeddingErr);
+          await updateWorkerProcessingState(workerId, { embeddingStatus: "pending" });
+        }
+      })().catch((backgroundErr) => {
+        console.error("[REGISTER] Error", backgroundErr);
+      });
+
+      void (async () => {
+        console.info("[REGISTER] API Sync Start", { workerId });
+        try {
+          const apiResponse = await apiPostJson<{ worker: { id?: number; workerId?: string } }>(
+            "workers",
+            payload,
+            30000,
+          );
+          console.info("[REGISTER] API Sync Complete", apiResponse);
+          await updateWorkerProcessingState(workerId, { syncStatus: "synced" });
+        } catch (syncErr) {
+          console.error("[REGISTER] Error", syncErr);
+          await updateWorkerProcessingState(workerId, { syncStatus: "pending" });
+        }
+      })();
+
+      console.info("[REGISTER] Registration Complete", {
+        workerId,
+        workerCode: payload.workerId,
+      });
+
       await clearSession(sessionId);
-      await refreshAdminData();
+
+      void refreshAdminData().catch((refreshErr) => {
+        console.warn("[REGISTER] Admin refresh failed:", refreshErr);
+      });
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Success", `Worker ${form.fullName} registered successfully!`, [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      router.back();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      Alert.alert("Error", msg.includes("UNIQUE") ? "Worker ID already exists." : "Failed to register worker.");
+      console.error("[REGISTER] Error", err);
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to register worker.");
+      setSubmitError(message || "Failed to register worker.");
+      Alert.alert("Register Worker Failed", message || "Failed to register worker.");
     } finally {
       setLoading(false);
     }
@@ -228,7 +362,7 @@ export default function RegisterWorkerScreen() {
 
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom + 20;
   const isOperator      = user?.role === "operator";
-  const deviceBlocked   = isOperator && !user?.isDeviceAuthorized;
+  const deviceBlocked   = isOperator && user?.isDeviceAuthorized === false;
 
   return (
     <DrawerOverlay>
@@ -239,7 +373,18 @@ export default function RegisterWorkerScreen() {
           <UnauthorizedDeviceScreen reason={user?.deviceVerifyReason} />
         )}
 
-        {!deviceBlocked && <ScrollView
+        {!deviceBlocked && geofenceBlocked && (
+          <GeofenceGate
+            plazaName={user?.plazaName}
+            distanceMeters={user?.geofenceDistanceMeters ?? null}
+            radiusMeters={user?.plazaRadiusMeters ?? null}
+            message={user?.geofenceMessage}
+            onRetry={() => { void refreshDeviceAuth(); }}
+            onBack={() => router.back()}
+          />
+        )}
+
+        {!deviceBlocked && !geofenceBlocked && <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: bottomPad }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -313,38 +458,31 @@ export default function RegisterWorkerScreen() {
               }]} />
             </View>
 
-            {/* Pose indicator grid — read-only, shows status */}
-            <View style={styles.poseGrid}>
-              {POSE_CONFIGS.map((pose) => {
-                const uri = captures[pose.key];
-                const done = !!uri;
-                return (
-                  <View
-                    key={pose.key}
-                    style={[styles.poseCard, {
-                      borderColor: done ? colors.success : colors.border,
-                      backgroundColor: done ? colors.successBg + "55" : colors.surface,
-                      borderRadius: 10,
-                    }]}
-                  >
-                    {done && uri ? (
-                      <>
-                        <Image source={{ uri }} style={styles.thumb} contentFit="cover" cachePolicy="memory-disk" />
-                        <View style={[styles.checkBadge, { backgroundColor: colors.success }]}>
-                          <Ionicons name="checkmark" size={11} color="#fff" />
-                        </View>
-                      </>
-                    ) : (
-                      <View style={[styles.poseIcon, { backgroundColor: colors.primary + "22" }]}>
-                        <Ionicons name={pose.icon as keyof typeof Ionicons.glyphMap} size={20} color={colors.textMuted} />
-                      </View>
-                    )}
-                    <Text style={[styles.poseLabel, { color: done ? colors.success : colors.textMuted }]}>
-                      {pose.label}
-                    </Text>
-                  </View>
-                );
-              })}
+            {/* Compact progress guide */}
+            <View style={[styles.captureGuide, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.captureGuideRow}>
+                <Ionicons name="scan-outline" size={18} color={colors.accent} />
+                <Text style={[styles.captureGuideTitle, { color: colors.foreground }]}>
+                  Guided 8-step face profile
+                </Text>
+              </View>
+              <Text style={[styles.captureGuideText, { color: colors.textSecondary }]}>
+                The camera will guide you through Front Face, Left Profile, Right Profile, Face Up, Face Down, Smile, Blink, and Neutral one by one.
+              </Text>
+              <View style={[styles.captureProgressLine, { backgroundColor: colors.primary + "18" }]}>
+                <View
+                  style={[
+                    styles.captureProgressFill,
+                    {
+                      width: `${(captureCount / TOTAL_POSES) * 100}%` as never,
+                      backgroundColor: allCaptured ? colors.success : colors.primary,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.captureGuideFoot, { color: allCaptured ? colors.success : colors.textMuted }]}>
+                {allCaptured ? "All poses captured. Ready to register." : `${captureCount} of ${TOTAL_POSES} poses captured.`}
+              </Text>
             </View>
 
             {/* All done banner */}
@@ -381,6 +519,12 @@ export default function RegisterWorkerScreen() {
           </View>
 
           {/* ── Register button ── */}
+          {submitError ? (
+            <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "44" }]}>
+              <Ionicons name="alert-circle-outline" size={18} color={colors.destructive} />
+              <Text style={[styles.errorBannerText, { color: colors.destructive }]}>{submitError}</Text>
+            </View>
+          ) : null}
           <TouchableOpacity
             style={[styles.registerBtn, {
               backgroundColor: allCaptured && !loading ? colors.primary : colors.muted,
@@ -427,28 +571,19 @@ const styles = StyleSheet.create({
   progText: { fontSize: 13, fontWeight: "800" },
   progBarBg: { height: 5, borderRadius: 3, overflow: "hidden" },
   progBarFill: { height: "100%", borderRadius: 3 },
-
-  /* Pose indicator grid */
-  poseGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  poseCard: {
-    width: "22%",
-    aspectRatio: 0.85,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    padding: 6,
-    borderWidth: 1.5,
-    gap: 3,
-    overflow: "hidden",
-    position: "relative",
-  },
-  poseIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginBottom: 2 },
-  thumb: { position: "absolute", top: 0, left: 0, right: 0, bottom: 16, borderRadius: 7 },
-  checkBadge: { position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  poseLabel: { fontSize: 8, textAlign: "center", fontWeight: "600" },
+  captureGuide: { borderWidth: 1, padding: 14, borderRadius: 12, gap: 10 },
+  captureGuideRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  captureGuideTitle: { fontSize: 14, fontWeight: "700" },
+  captureGuideText: { fontSize: 12, lineHeight: 18 },
+  captureProgressLine: { height: 5, borderRadius: 3, overflow: "hidden" },
+  captureProgressFill: { height: "100%", borderRadius: 3 },
+  captureGuideFoot: { fontSize: 12, fontWeight: "600" },
 
   /* Done banner */
   doneBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, borderWidth: 1 },
   doneBannerText: { flex: 1, fontSize: 13, fontWeight: "600" },
+  errorBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, borderWidth: 1 },
+  errorBannerText: { flex: 1, fontSize: 13, fontWeight: "600" },
 
   /* Start capture button */
   startCaptureBtn: {

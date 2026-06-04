@@ -1,5 +1,6 @@
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppState, type AppStateStatus } from "react-native";
 import {
   getSyncQueue,
   markSynced,
@@ -7,8 +8,10 @@ import {
   getAttendanceById,
 } from "./database";
 import { fetchAwsStatus, runPurge, getLastPurge, type AwsStatus } from "./AwsSyncService";
-import { getApiBase } from "./apiConfig";
+import { apiFetch, createRequestSignal, resolveApiBase } from "./apiConfig";
 import { bootstrapOperatorOfflineData } from "./offlineBootstrapService";
+import { flushPendingGeofenceLogs, validateStoredOperatorGeofence } from "./locationService";
+import { friendlyConnectionMessage, friendlyErrorMessage } from "./userMessages";
 
 export type { AwsStatus };
 
@@ -36,8 +39,6 @@ export interface SyncResult {
 
 type SyncListener = (state: SyncState) => void;
 
-export { getApiBase };
-
 class SyncService {
   private listeners = new Set<SyncListener>();
   private state: SyncState = {
@@ -54,13 +55,21 @@ class SyncService {
     purgedTotal: 0,
   };
   private netInfoUnsub: (() => void) | null = null;
+  private appStateUnsub: { remove: () => void } | null = null;
+  private started = false;
 
   private async onConnectivityRestored() {
     try {
+      console.info("[SyncService] connectivity restored", { isOnline: true });
       const stored = await AsyncStorage.getItem("@spectra_user");
       if (stored) {
         const u = JSON.parse(stored) as { role?: string; userId?: string };
+        console.info("[SyncService] connectivity restore session", {
+          role: u.role ?? "",
+          userId: u.userId ?? "",
+        });
         if (u.role === "operator" && u.userId) {
+          console.info("[SyncService] connectivity restore bootstrap", { userId: u.userId });
           await bootstrapOperatorOfflineData(u.userId);
         }
       }
@@ -68,12 +77,16 @@ class SyncService {
       /* non-fatal */
     }
     this.loadAwsStatus();
+    await flushPendingGeofenceLogs().catch(() => {});
     this.sync();
   }
 
   start() {
+    if (this.started) return;
+    this.started = true;
+
     NetInfo.fetch().then((s) => {
-      const online = !!s.isConnected && !!s.isInternetReachable;
+      const online = Boolean(s.isConnected) && s.isInternetReachable !== false;
       this.setState({ isOnline: online });
       if (online) {
         void this.onConnectivityRestored();
@@ -82,10 +95,18 @@ class SyncService {
 
     this.netInfoUnsub = NetInfo.addEventListener((s) => {
       const wasOnline = this.state.isOnline;
-      const online = !!s.isConnected && !!s.isInternetReachable;
+      const online = Boolean(s.isConnected) && s.isInternetReachable !== false;
       this.setState({ isOnline: online });
       if (!wasOnline && online) {
         void this.onConnectivityRestored();
+      }
+    });
+
+    this.appStateUnsub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      if (nextState === "active") {
+        console.info("APP_FOREGROUND", { source: "SyncService", isOnline: this.state.isOnline });
+      } else {
+        console.info("APP_BACKGROUND", { source: "SyncService", nextState, isOnline: this.state.isOnline });
       }
     });
 
@@ -94,8 +115,11 @@ class SyncService {
   }
 
   stop() {
+    this.started = false;
     this.netInfoUnsub?.();
     this.netInfoUnsub = null;
+    this.appStateUnsub?.remove();
+    this.appStateUnsub = null;
   }
 
   subscribe(listener: SyncListener): () => void {
@@ -142,6 +166,15 @@ class SyncService {
     this.setState({ isSyncing: true, lastError: null });
 
     try {
+      const geofence = await validateStoredOperatorGeofence();
+      if (geofence && !geofence.allowed) {
+        this.setState({
+          isSyncing: false,
+          lastError: geofence.message,
+        });
+        return { synced: 0, errors: 1, awsUploaded: false, purgedAttendance: 0 };
+      }
+
       const queue = await getSyncQueue();
       const pending = queue.filter((r) => r.status === "pending");
 
@@ -182,7 +215,9 @@ class SyncService {
       const firstAttendance = attendance[0] as any;
       const firstWorker = workers[0] as any;
 
-      const response = await fetch(`${getApiBase()}/sync`, {
+      const base = await resolveApiBase();
+      console.info("[SyncService] syncing to", base);
+      const response = await apiFetch(`${base}/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -191,14 +226,15 @@ class SyncService {
           deviceToken: firstAttendance?.deviceToken ?? firstWorker?.deviceToken ?? "",
           plazaId: firstAttendance?.plazaId ?? firstWorker?.plazaId ?? "",
         }),
-        signal: AbortSignal.timeout(30000),
-      });
+        signal: createRequestSignal(30000),
+      }, 30000);
 
       if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}`);
+        const responseText = await response.clone().text().catch(() => "");
+        throw new Error(responseText.trim() || `Server responded with ${response.status}`);
       }
 
-      const responseData = await response.json() as {
+      const responseData = (await response.json()) as {
         success: boolean;
         synced: { workers: number; attendance: number };
         errors: string[];
@@ -238,7 +274,7 @@ class SyncService {
 
       return { synced: pending.length, errors: 0, awsUploaded, s3Key: lastS3Key ?? undefined, purgedAttendance };
     } catch (e) {
-      const msg = (e as Error).message ?? "Unknown error";
+      const msg = friendlyErrorMessage(e, friendlyConnectionMessage());
       this.setState({ isSyncing: false, lastError: msg });
       await this.refreshPendingCount();
       return { synced: 0, errors: 1, awsUploaded: false, purgedAttendance: 0 };

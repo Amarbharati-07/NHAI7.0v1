@@ -13,11 +13,12 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DrawerOverlay from "@/components/DrawerOverlay";
+import GeofenceGate from "@/components/GeofenceGate";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminData } from "@/contexts/AdminDataContext";
 import { insertAttendance, getWorkerByWorkerId } from "@/services/database";
 import { syncService } from "@/services/SyncService";
-import { requestLocationPermission, getCurrentLocation, checkGeofence, GpsLocation } from "@/services/locationService";
+import { validateOperatorGeofence, type GpsLocation } from "@/services/locationService";
 import { useColors } from "@/hooks/useColors";
 
 export default function AttendanceSuccessScreen() {
@@ -41,6 +42,7 @@ export default function AttendanceSuccessScreen() {
 
   const [savedStatus, setSavedStatus] = useState<"saving" | "saved_offline" | "saved_synced" | "error">("saving");
   const [gpsLocation, setGpsLocation] = useState<GpsLocation | null>(null);
+  const [geofenceBlocked, setGeofenceBlocked] = useState<{ plazaName?: string; distanceMeters?: number | null; radiusMeters?: number | null; message?: string } | null>(null);
   const savedRef = useRef(false);
 
   const now     = new Date();
@@ -68,13 +70,27 @@ export default function AttendanceSuccessScreen() {
           return;
         }
 
-        // Capture GPS location
-        let loc: GpsLocation | null = null;
-        if (Platform.OS !== "web") {
-          await requestLocationPermission();
-          loc = await getCurrentLocation();
-          if (loc) setGpsLocation(loc);
+        const geofence = await validateOperatorGeofence({
+          userId: user?.userId ?? "",
+          plazaId: user?.plazaId ?? "",
+          plazaName: user?.plazaName ?? "",
+          plazaLatitude: user?.plazaLatitude ?? null,
+          plazaLongitude: user?.plazaLongitude ?? null,
+          plazaRadiusMeters: user?.plazaRadiusMeters ?? 300,
+        });
+
+        if (!geofence.allowed) {
+          setGeofenceBlocked({
+            plazaName: geofence.plaza?.plazaName ?? user?.plazaName ?? "the plaza",
+            distanceMeters: geofence.distanceMeters,
+            radiusMeters: geofence.plaza?.radiusMeters ?? user?.plazaRadiusMeters ?? null,
+            message: geofence.message,
+          });
+          setSavedStatus("error");
+          return;
         }
+        const loc: GpsLocation | null = geofence.location;
+        if (loc) setGpsLocation(loc);
 
         await insertAttendance({
           workerId: dbWorkerId,
@@ -131,6 +147,22 @@ export default function AttendanceSuccessScreen() {
   };
 
   const badge = syncBadge();
+
+  if (geofenceBlocked) {
+    return (
+      <DrawerOverlay>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <GeofenceGate
+            plazaName={geofenceBlocked.plazaName}
+            distanceMeters={geofenceBlocked.distanceMeters ?? null}
+            radiusMeters={geofenceBlocked.radiusMeters ?? null}
+            message={geofenceBlocked.message}
+            onBack={() => router.back()}
+          />
+        </View>
+      </DrawerOverlay>
+    );
+  }
 
   return (
     <DrawerOverlay>

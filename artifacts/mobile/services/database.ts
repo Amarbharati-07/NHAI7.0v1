@@ -15,6 +15,9 @@ export interface Worker {
   operatorId?: string;
   deviceToken?: string;
   status?: WorkerStatus;
+  registrationAt?: string;
+  syncStatus?: "pending" | "synced" | "failed";
+  embeddingStatus?: "pending" | "processing" | "ready" | "failed";
   createdAt?: string;
 }
 
@@ -115,12 +118,12 @@ function seedWebStore(): void {
   webStore.seeded = true;
 
   const baseWorkers: Omit<Worker, "id" | "createdAt">[] = [
-    { workerId: "WRK001", fullName: "Rajesh Kumar",   mobile: "9876543210", department: "Civil",      contractorName: "ABC Constructions", employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active" },
-    { workerId: "WRK002", fullName: "Priya Sharma",   mobile: "9876543211", department: "Electrical", contractorName: "XYZ Electricals",   employeeType: "Permanent", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active" },
-    { workerId: "WRK003", fullName: "Amit Singh",     mobile: "9876543212", department: "Plumbing",   contractorName: "ABC Constructions", employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active" },
-    { workerId: "WRK004", fullName: "Sunita Verma",   mobile: "9876543213", department: "Civil",      contractorName: "DEF Projects",      employeeType: "Temporary", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active" },
-    { workerId: "WRK005", fullName: "Mohan Lal",      mobile: "9876543214", department: "Security",   contractorName: "GHI Security",      employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active" },
-    { workerId: "WRK006", fullName: "Kavitha Nair",   mobile: "9876543215", department: "Admin",      contractorName: "Internal",          employeeType: "Permanent", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active" },
+    { workerId: "WRK001", fullName: "Rajesh Kumar",   mobile: "9876543210", department: "Civil",      contractorName: "ABC Constructions", employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active", registrationAt: nowIso(), syncStatus: "synced", embeddingStatus: "ready" },
+    { workerId: "WRK002", fullName: "Priya Sharma",   mobile: "9876543211", department: "Electrical", contractorName: "XYZ Electricals",   employeeType: "Permanent", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active", registrationAt: nowIso(), syncStatus: "synced", embeddingStatus: "ready" },
+    { workerId: "WRK003", fullName: "Amit Singh",     mobile: "9876543212", department: "Plumbing",   contractorName: "ABC Constructions", employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active", registrationAt: nowIso(), syncStatus: "synced", embeddingStatus: "ready" },
+    { workerId: "WRK004", fullName: "Sunita Verma",   mobile: "9876543213", department: "Civil",      contractorName: "DEF Projects",      employeeType: "Temporary", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active", registrationAt: nowIso(), syncStatus: "synced", embeddingStatus: "ready" },
+    { workerId: "WRK005", fullName: "Mohan Lal",      mobile: "9876543214", department: "Security",   contractorName: "GHI Security",      employeeType: "Contract",  siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active", registrationAt: nowIso(), syncStatus: "synced", embeddingStatus: "ready" },
+    { workerId: "WRK006", fullName: "Kavitha Nair",   mobile: "9876543215", department: "Admin",      contractorName: "Internal",          employeeType: "Permanent", siteLocation: "NH-48 Gurugram Plaza", plazaId: "PLZ001", operatorId: "OPR001", deviceToken: "", status: "active", registrationAt: nowIso(), syncStatus: "synced", embeddingStatus: "ready" },
   ];
 
   baseWorkers.forEach((w) => {
@@ -163,7 +166,15 @@ function enrichAttendance(a: AttendanceRecord & { id: number }): AttendanceRecor
 async function web_insertWorker(form: Parameters<typeof insertWorker>[0]): Promise<number> {
   seedWebStore();
   const id = webStoreNextId.workers++;
-  webStore.workers.unshift({ ...form, id, status: "active", createdAt: nowIso() });
+  webStore.workers.unshift({
+    ...form,
+    id,
+    status: (form.status as WorkerStatus) ?? "active",
+    registrationAt: form.registrationAt ?? nowIso(),
+    syncStatus: (form.syncStatus as Worker["syncStatus"]) ?? "pending",
+    embeddingStatus: (form.embeddingStatus as Worker["embeddingStatus"]) ?? "pending",
+    createdAt: nowIso(),
+  });
   webStore.syncQueue.push({ id: webStoreNextId.syncQueue++, recordType: "worker", recordId: id, status: "pending", createdAt: nowIso() });
   return id;
 }
@@ -269,6 +280,16 @@ async function web_updateWorker(id: number, fields: Parameters<typeof updateWork
       webStore.auditLog.push({ id: webStoreNextId.auditLog++, workerId: id, action: "update_field", fieldChanged: key, oldValue: String(originalRecord[key] ?? ""), newValue: String(fields[key]), changedBy, createdAt: nowIso() });
     }
   }
+}
+
+async function web_updateWorkerProcessingState(
+  id: number,
+  fields: Partial<Pick<Worker, "registrationAt" | "syncStatus" | "embeddingStatus">>,
+): Promise<void> {
+  seedWebStore();
+  const idx = webStore.workers.findIndex((w) => w.id === id);
+  if (idx === -1) return;
+  webStore.workers[idx] = { ...webStore.workers[idx], ...fields };
 }
 
 async function web_setWorkerStatus(id: number, status: WorkerStatus, changedBy: string): Promise<void> {
@@ -438,6 +459,9 @@ async function initDb(db: import("expo-sqlite").SQLiteDatabase) {
       contractorName TEXT,
       employeeType TEXT,
       siteLocation TEXT,
+      registrationAt TEXT DEFAULT (datetime('now')),
+      syncStatus TEXT DEFAULT 'pending',
+      embeddingStatus TEXT DEFAULT 'pending',
       createdAt TEXT DEFAULT (datetime('now'))
     );
 
@@ -485,6 +509,9 @@ async function initDb(db: import("expo-sqlite").SQLiteDatabase) {
     "ALTER TABLE attendance ADD COLUMN operatorId TEXT DEFAULT ''",
     "ALTER TABLE attendance ADD COLUMN deviceToken TEXT DEFAULT ''",
     "ALTER TABLE workers ADD COLUMN status TEXT DEFAULT 'active'",
+    "ALTER TABLE workers ADD COLUMN registrationAt TEXT DEFAULT ''",
+    "ALTER TABLE workers ADD COLUMN syncStatus TEXT DEFAULT 'pending'",
+    "ALTER TABLE workers ADD COLUMN embeddingStatus TEXT DEFAULT 'pending'",
     "ALTER TABLE attendance ADD COLUMN latitude REAL",
     "ALTER TABLE attendance ADD COLUMN longitude REAL",
     `CREATE TABLE IF NOT EXISTS audit_log (
@@ -532,8 +559,8 @@ async function seedSQLite(db: import("expo-sqlite").SQLiteDatabase) {
 
   for (const w of workers) {
     await db.runAsync(
-      "INSERT OR IGNORE INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      [w.workerId, w.fullName, w.mobile, w.department, w.contractorName, w.employeeType, w.siteLocation, w.plazaId, w.operatorId, w.deviceToken]
+      "INSERT OR IGNORE INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation, plazaId, operatorId, deviceToken, status, registrationAt, syncStatus, embeddingStatus) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [w.workerId, w.fullName, w.mobile, w.department, w.contractorName, w.employeeType, w.siteLocation, w.plazaId, w.operatorId, w.deviceToken, "active", nowIso(), "synced", "ready"]
     );
   }
 
@@ -574,16 +601,45 @@ export async function insertWorker(
     workerId: string; fullName: string; mobile: string;
     department: string; contractorName: string; employeeType: string; siteLocation: string;
     plazaId?: string; operatorId?: string; deviceToken?: string;
+    status?: WorkerStatus;
+    registrationAt?: string;
+    syncStatus?: Worker["syncStatus"];
+    embeddingStatus?: Worker["embeddingStatus"];
   }
 ): Promise<number> {
   if (IS_WEB) return web_insertWorker(form);
   const db = await getDb();
   const result = await db.runAsync(
-    "INSERT INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation, plazaId, operatorId, deviceToken) VALUES (?,?,?,?,?,?,?,?,?,?)",
-    [form.workerId, form.fullName, form.mobile, form.department, form.contractorName, form.employeeType, form.siteLocation, form.plazaId ?? "", form.operatorId ?? "", form.deviceToken ?? ""]
+    "INSERT INTO workers (workerId, fullName, mobile, department, contractorName, employeeType, siteLocation, plazaId, operatorId, deviceToken, status, registrationAt, syncStatus, embeddingStatus) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    [form.workerId, form.fullName, form.mobile, form.department, form.contractorName, form.employeeType, form.siteLocation, form.plazaId ?? "", form.operatorId ?? "", form.deviceToken ?? "", form.status ?? "active", form.registrationAt ?? nowIso(), form.syncStatus ?? "pending", form.embeddingStatus ?? "pending"]
   );
   await db.runAsync("INSERT INTO sync_queue (recordType, recordId, status) VALUES (?, ?, ?)", ["worker", result.lastInsertRowId, "pending"]);
   return result.lastInsertRowId;
+}
+
+export async function updateWorkerProcessingState(
+  id: number,
+  fields: Partial<Pick<Worker, "registrationAt" | "syncStatus" | "embeddingStatus">>,
+): Promise<void> {
+  if (IS_WEB) return web_updateWorkerProcessingState(id, fields);
+  const db = await getDb();
+  const updates: string[] = [];
+  const values: (string | number)[] = [];
+  if (fields.registrationAt !== undefined) {
+    updates.push("registrationAt = ?");
+    values.push(fields.registrationAt);
+  }
+  if (fields.syncStatus !== undefined) {
+    updates.push("syncStatus = ?");
+    values.push(fields.syncStatus);
+  }
+  if (fields.embeddingStatus !== undefined) {
+    updates.push("embeddingStatus = ?");
+    values.push(fields.embeddingStatus);
+  }
+  if (updates.length === 0) return;
+  values.push(id);
+  await db.runAsync(`UPDATE workers SET ${updates.join(", ")} WHERE id = ?`, values);
 }
 
 export async function insertAttendance(

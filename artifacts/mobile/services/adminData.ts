@@ -3,6 +3,9 @@ export interface TollPlaza {
   name: string;
   route: string;
   location: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  radiusMeters?: number;
   operatorId: string;
   operatorName: string;
   workerCount: number;
@@ -80,27 +83,27 @@ export interface PlazaAttendanceSummary {
 
 export const MOCK_TOLL_PLAZAS: TollPlaza[] = [
   {
-    id: "PLZ001", name: "NH-48 Gurugram Plaza", route: "NH-48", location: "Gurugram, Haryana",
+    id: "PLZ001", name: "NH-48 Gurugram Plaza", route: "NH-48", location: "Gurugram, Haryana", latitude: 28.4595, longitude: 77.0266, radiusMeters: 300,
     operatorId: "OPR001", operatorName: "Rajan Mehta", workerCount: 32, activeDevices: 2,
     attendanceToday: 30, attendancePct: 94, status: "active", lastSync: "10 mins ago", createdAt: "2024-01-15",
   },
   {
-    id: "PLZ002", name: "NH-8 Manesar Plaza", route: "NH-8", location: "Manesar, Haryana",
+    id: "PLZ002", name: "NH-8 Manesar Plaza", route: "NH-8", location: "Manesar, Haryana", latitude: 28.3489, longitude: 76.9356, radiusMeters: 300,
     operatorId: "OPR002", operatorName: "Kavita Joshi", workerCount: 28, activeDevices: 2,
     attendanceToday: 24, attendancePct: 86, status: "active", lastSync: "25 mins ago", createdAt: "2024-02-01",
   },
   {
-    id: "PLZ003", name: "NH-44 Panipat Plaza", route: "NH-44", location: "Panipat, Haryana",
+    id: "PLZ003", name: "NH-44 Panipat Plaza", route: "NH-44", location: "Panipat, Haryana", latitude: 29.3909, longitude: 76.9635, radiusMeters: 300,
     operatorId: "OPR003", operatorName: "Arun Patel", workerCount: 25, activeDevices: 1,
     attendanceToday: 23, attendancePct: 92, status: "active", lastSync: "1 hr ago", createdAt: "2024-02-20",
   },
   {
-    id: "PLZ004", name: "NH-58 Meerut Plaza", route: "NH-58", location: "Meerut, UP",
+    id: "PLZ004", name: "NH-58 Meerut Plaza", route: "NH-58", location: "Meerut, UP", latitude: 28.9845, longitude: 77.7064, radiusMeters: 300,
     operatorId: "", operatorName: "Unassigned", workerCount: 0, activeDevices: 0,
     attendanceToday: 0, attendancePct: 0, status: "inactive", lastSync: "Never", createdAt: "2024-03-10",
   },
   {
-    id: "PLZ005", name: "NH-24 Delhi Toll", route: "NH-24", location: "Delhi",
+    id: "PLZ005", name: "NH-24 Delhi Toll", route: "NH-24", location: "Delhi", latitude: 28.7041, longitude: 77.1025, radiusMeters: 300,
     operatorId: "OPR004", operatorName: "Shreya Singh", workerCount: 18, activeDevices: 1,
     attendanceToday: 15, attendancePct: 83, status: "maintenance", lastSync: "3 hrs ago", createdAt: "2024-03-25",
   },

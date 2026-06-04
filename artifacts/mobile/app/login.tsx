@@ -23,6 +23,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
+import { friendlyConnectionMessage, friendlyErrorMessage } from "@/services/userMessages";
 
 const TOLL_BG = require("../assets/images/toll-plaza.png");
 const NHAI_LOGO = require("../assets/images/icon.png");
@@ -65,23 +66,31 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    if (loading) return;
     if (!userId.trim() || !password.trim()) {
       setError("Please enter User ID and Password.");
       shake();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
-    setLoading(true);
-    setError("");
-    const result = await login(userId.trim(), password);
-    setLoading(false);
-    if (result.ok) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace("/dashboard");
-    } else {
-      setError(result.error ?? "Invalid User ID or Password. Please try again.");
+    try {
+      setLoading(true);
+      setError("");
+      const result = await login(userId.trim(), password);
+      if (result.ok) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace("/dashboard");
+      } else {
+        setError(result.error ?? "Invalid User ID or Password. Please try again.");
+        shake();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+    } catch (err) {
+      setError(friendlyErrorMessage(err, friendlyConnectionMessage()));
       shake();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -212,6 +221,16 @@ export default function LoginScreen() {
                 ADMIN001 / admin123{"  •  "}OPR001 / opr123
               </Text>
             </View>
+
+            {typeof __DEV__ !== "undefined" && __DEV__ ? (
+              <TouchableOpacity
+                style={styles.diagnosticLink}
+                onPress={() => router.push("/network-diagnostic")}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.diagnosticLinkText}>Open Network Diagnostic</Text>
+              </TouchableOpacity>
+            ) : null}
           </Animated.View>
 
           {/* ── Feature Pills ── */}
@@ -384,6 +403,15 @@ const styles = StyleSheet.create({
   },
   demoText: { flex: 1, fontSize: 12, color: "#374151", lineHeight: 18 },
   demoLabel: { fontWeight: "700", color: "#1A56DB" },
+  diagnosticLink: {
+    alignSelf: "center",
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(26, 86, 219, 0.10)",
+  },
+  diagnosticLinkText: { color: "#1A56DB", fontSize: 12, fontWeight: "700" },
 
   /* Features */
   features: {

@@ -1,8 +1,20 @@
-import { apiFetch, getApiBase } from "./apiConfig";
+import { apiFetch, resolveApiBase } from "./apiConfig";
 import type { AuthUser } from "@/types/auth";
+import { friendlyApiUnreachableMessage, isApiUnreachableError } from "./userMessages";
+
+export interface LoginDevicePayload {
+  deviceId: string;
+  deviceName: string;
+  deviceModel: string;
+  deviceType: string;
+  deviceToken?: string;
+  plazaName: string;
+  status: string;
+}
 
 export interface LoginResponse {
   user: AuthUser;
+  device?: LoginDevicePayload | null;
 }
 
 export interface LoginErrorBody {
@@ -12,14 +24,26 @@ export interface LoginErrorBody {
 export async function loginWithApi(
   userId: string,
   password: string,
-): Promise<{ user: AuthUser } | { error: string }> {
-  const base = getApiBase();
+): Promise<{ user: AuthUser; device?: LoginDevicePayload | null } | { error: string }> {
+  let base = "";
+  let url = "";
   try {
+    base = await resolveApiBase(true);
+    url = `${base}/auth/login`;
+    console.info("[LOGIN] Base URL:", base);
+    console.info("[LOGIN] Request URL:", url);
+    console.info("[LOGIN] Request Body:", {
+      userId: userId.trim().toUpperCase(),
+      password: "[redacted]",
+    });
     const res = await apiFetch(
-      `${base}/auth/login`,
+      url,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify({
           userId: userId.trim().toUpperCase(),
           password,
@@ -28,26 +52,46 @@ export async function loginWithApi(
       15000,
     );
 
-    const body = (await res.json().catch(() => ({}))) as LoginResponse & LoginErrorBody;
+    const bodyText = await res.clone().text().catch(() => "");
+    console.info("[LOGIN] Response Status:", res.status);
+    console.info("[LOGIN] Response Body:", bodyText || "(empty)");
+    const body = safeParseLoginBody(bodyText) as LoginResponse & LoginErrorBody;
 
     if (!res.ok) {
-      return { error: body.error ?? "Invalid User ID or Password" };
+      return { error: body.error ?? bodyText.trim() ?? "Invalid User ID or Password" };
     }
 
     if (!body.user?.userId) {
-      return { error: "Invalid login response from server" };
+      return { error: bodyText.trim() || "Invalid login response from server" };
     }
 
-    return { user: body.user };
+    console.info("LOGIN_RESPONSE", {
+      userId: body.user.userId,
+      plazaId: body.user.plazaId ?? "",
+      plazaName: body.user.plazaName ?? "",
+      loginCount: body.user.loginCount ?? 0,
+      deviceId: body.device?.deviceId ?? "",
+      deviceToken: body.device?.deviceToken?.slice(0, 12) ?? "",
+    });
+    return { user: body.user, device: body.device ?? null };
   } catch (err) {
-    const name = err instanceof Error ? err.name : "";
-    if (name === "AbortError") {
-      return {
-        error: `Server did not respond in time. Check that the API is running at ${base}`,
-      };
+    const message = err instanceof Error ? err.message : String(err ?? "");
+    if (isApiUnreachableError(message) || isApiUnreachableError(err)) {
+      console.warn("[LOGIN] API unreachable", { url, message });
+      return { error: friendlyApiUnreachableMessage() };
     }
     return {
-      error: `Cannot reach server at ${base}. Use your computer's LAN IP (not localhost) and ensure the API is running.`,
+      error: `Login failed while calling ${url}. Last error: ${message || "Unknown error"}`,
     };
+  }
+}
+
+function safeParseLoginBody(bodyText: string): unknown {
+  const trimmed = bodyText.trim();
+  if (!trimmed) return {};
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return { error: trimmed };
   }
 }

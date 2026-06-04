@@ -28,6 +28,27 @@ interface StoredCredential {
   updatedAt: string;
 }
 
+function mergeProfile(existing: AuthUser | null, next: AuthUser): AuthUser {
+  return {
+    ...(existing ?? {}),
+    ...next,
+    plazaId: next.plazaId ?? existing?.plazaId,
+    plazaName: next.plazaName ?? existing?.plazaName,
+    plazaLatitude: next.plazaLatitude ?? existing?.plazaLatitude,
+    plazaLongitude: next.plazaLongitude ?? existing?.plazaLongitude,
+    plazaRadiusMeters: next.plazaRadiusMeters ?? existing?.plazaRadiusMeters,
+    status: next.status ?? existing?.status,
+    allocatedDeviceId: next.allocatedDeviceId ?? existing?.allocatedDeviceId,
+    deviceToken: next.deviceToken ?? existing?.deviceToken,
+    isDeviceAuthorized: next.isDeviceAuthorized ?? existing?.isDeviceAuthorized,
+    deviceVerifyReason: next.deviceVerifyReason ?? existing?.deviceVerifyReason,
+    geofenceAllowed: next.geofenceAllowed ?? existing?.geofenceAllowed,
+    geofenceDistanceMeters: next.geofenceDistanceMeters ?? existing?.geofenceDistanceMeters,
+    geofenceCheckedAt: next.geofenceCheckedAt ?? existing?.geofenceCheckedAt,
+    geofenceMessage: next.geofenceMessage ?? existing?.geofenceMessage,
+  };
+}
+
 function credKey(userId: string): string {
   return `spectra_offline_cred_${userId.toUpperCase()}`;
 }
@@ -91,7 +112,17 @@ export async function saveOfflineCredentials(
 
 /** Update cached profile without changing password (e.g. after bootstrap). */
 export async function updateOfflineProfile(userId: string, profile: AuthUser): Promise<void> {
-  await AsyncStorage.setItem(profileKey(userId.toUpperCase()), JSON.stringify(profile));
+  const key = profileKey(userId.toUpperCase());
+  const existingRaw = await AsyncStorage.getItem(key);
+  const existing = existingRaw ? (JSON.parse(existingRaw) as AuthUser) : null;
+  const merged = mergeProfile(existing, profile);
+  await AsyncStorage.setItem(key, JSON.stringify(merged));
+  console.info("[offlineAuth] profile updated", {
+    userId: merged.userId,
+    plazaId: merged.plazaId ?? "",
+    deviceId: merged.allocatedDeviceId ?? "",
+    authorized: merged.isDeviceAuthorized,
+  });
 }
 
 export async function verifyOfflineCredentials(
